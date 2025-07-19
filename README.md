@@ -2,6 +2,8 @@
 
 A real-time sentiment analysis application that monitors stock discussions on Reddit's r/wallstreetbets and provides sentiment analysis for mentioned stocks.
 
+Access here: https://wsbtracker.streamlit.app/
+
 ## Features
 
 - 🔍 **Real-time Reddit Scraping**: Fetches hot posts from r/wallstreetbets using public JSON feeds
