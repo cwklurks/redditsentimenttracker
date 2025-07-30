@@ -1,7 +1,5 @@
 // Port of Python data_controller.py to TypeScript
 
-import { promises as fs } from 'fs';
-import path from 'path';
 import { RedditScraper } from './reddit-scraper';
 import { StockExtractor } from './stock-extractor';
 import { SentimentAnalyzer } from './sentiment-analyzer';
@@ -12,14 +10,13 @@ export class DataController {
   private stockExtractor: StockExtractor;
   private sentimentAnalyzer: SentimentAnalyzer;
   private cacheDuration: number;
-  private cacheFile: string;
+  private memoryCache: DataCache | null = null;
 
   constructor(cacheDurationMinutes: number = 30) {
     this.redditScraper = new RedditScraper();
     this.stockExtractor = new StockExtractor();
     this.sentimentAnalyzer = new SentimentAnalyzer();
     this.cacheDuration = cacheDurationMinutes * 60 * 1000; // Convert to milliseconds
-    this.cacheFile = path.join(process.cwd(), 'data', 'cache.json');
   }
 
   async processRedditData(postLimit: number = 200, topStocksLimit: number = 20): Promise<StockMention[]> {
@@ -134,25 +131,11 @@ export class DataController {
   }
 
   private async loadCache(): Promise<DataCache | null> {
-    try {
-      // Ensure data directory exists
-      const dataDir = path.dirname(this.cacheFile);
-      await fs.mkdir(dataDir, { recursive: true });
-
-      const data = await fs.readFile(this.cacheFile, 'utf-8');
-      return JSON.parse(data);
-    } catch (error) {
-      // Cache file doesn't exist or is invalid
-      return null;
-    }
+    return this.memoryCache;
   }
 
   private async saveCache(stockMentions: StockMention[], posts: RedditPost[]): Promise<void> {
     try {
-      // Ensure data directory exists
-      const dataDir = path.dirname(this.cacheFile);
-      await fs.mkdir(dataDir, { recursive: true });
-
       const cacheData: DataCache = {
         timestamp: new Date().toISOString(),
         stock_mentions: this.serializeStockMentions(stockMentions),
@@ -160,20 +143,16 @@ export class DataController {
         cache_duration_minutes: this.cacheDuration / (60 * 1000),
       };
 
-      await fs.writeFile(this.cacheFile, JSON.stringify(cacheData, null, 2));
-      console.log('Data cached successfully');
+      this.memoryCache = cacheData;
+      console.log('Data cached successfully in memory');
     } catch (error) {
       console.error('Error saving cache:', error);
     }
   }
 
   private async clearCache(): Promise<void> {
-    try {
-      await fs.unlink(this.cacheFile);
-      console.log('Cache cleared');
-    } catch (error) {
-      // Cache file doesn't exist, which is fine
-    }
+    this.memoryCache = null;
+    console.log('Memory cache cleared');
   }
 
   private isCacheValid(cachedData: DataCache): boolean {

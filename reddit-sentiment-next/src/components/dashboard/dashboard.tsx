@@ -8,7 +8,7 @@ import { ConfigPanel } from './config-panel';
 import { SentimentCharts } from '../charts/sentiment-charts';
 import { MarketInsightsComponent } from './market-insights';
 import { StockMention, DashboardConfig, ProcessingStatus } from '@/types';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -227,7 +227,73 @@ export default function Dashboard() {
         )}
 
         {/* Footer */}
-        <footer className="text-center text-xs text-gray-400 mt-12 pt-8 border-t">
+        {/* How It Works Section */}
+        <div className="mt-16 max-w-4xl mx-auto">
+          <Card className="border-dashed border-2 border-gray-200 dark:border-gray-700">
+            <CardHeader>
+              <CardTitle className="text-xl text-center text-gray-800 dark:text-gray-200">
+                How It Works
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
+                      <span className="text-blue-600 dark:text-blue-400 font-semibold text-sm">1</span>
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-gray-900 dark:text-gray-100">Reddit Data Collection</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        Fetches posts from r/wallstreetbets using Reddit&apos;s public JSON API
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center">
+                      <span className="text-green-600 dark:text-green-400 font-semibold text-sm">2</span>
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-gray-900 dark:text-gray-100">Stock Ticker Extraction</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        Identifies stock symbols mentioned in posts using advanced pattern matching
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center">
+                      <span className="text-purple-600 dark:text-purple-400 font-semibold text-sm">3</span>
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-gray-900 dark:text-gray-100">Sentiment Analysis</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        Analyzes sentiment using natural language processing algorithms
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center">
+                      <span className="text-orange-600 dark:text-orange-400 font-semibold text-sm">4</span>
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-gray-900 dark:text-gray-100">Real-time Updates</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        Caches results for 30 minutes to improve performance and reduce API calls
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <footer className="text-center text-xs text-gray-400 mt-12 pt-8 border-t border-gray-200 dark:border-gray-700">
           <p>
             Built with Next.js • Data from Reddit r/wallstreetbets • Sentiment analysis by Natural Language Processing
           </p>
