@@ -1,15 +1,13 @@
 # Reddit Stock Sentiment Tracker 📈
 
-A real-time sentiment analysis application that monitors stock discussions on Reddit's r/wallstreetbets and provides sentiment analysis for mentioned stocks.
-
-Access here: https://wsbtracker.streamlit.app/
+A real-time sentiment analysis application that monitors stock discussions on Reddit's r/wallstreetbets and provides sentiment analysis for mentioned stocks through a modern web dashboard.
 
 ## Features
 
 - 🔍 **Real-time Reddit Scraping**: Fetches hot posts from r/wallstreetbets using public JSON feeds
 - 📊 **Stock Ticker Extraction**: Identifies stock symbols mentioned in posts and comments
 - 💡 **Sentiment Analysis**: Uses VADER sentiment analysis to gauge market sentiment
-- 📈 **Interactive Dashboard**: Clean, responsive Streamlit interface
+- 📈 **Modern Web Dashboard**: Clean, responsive Next.js interface with interactive charts
 - 💾 **Smart Caching**: Reduces API calls with intelligent data caching
 - 🔄 **Auto-refresh**: Configurable data refresh intervals
 - ⚡ **Error Handling**: Graceful degradation with fallback to cached data
@@ -19,10 +17,11 @@ Access here: https://wsbtracker.streamlit.app/
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.8 or higher (for backend API)
+- Node.js 18+ (for frontend)
 - **No Reddit API credentials needed!** ✨
 
-### Installation
+### Backend Setup
 
 1. **Clone the repository**
    ```bash
@@ -30,19 +29,36 @@ Access here: https://wsbtracker.streamlit.app/
    cd reddit-sentiment
    ```
 
-2. **Install dependencies**
+2. **Install Python dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Run the application**
+3. **Run the backend API**
    ```bash
-   streamlit run app.py
+   python app.py
+   ```
+
+### Frontend Setup
+
+1. **Navigate to the frontend directory**
+   ```bash
+   cd reddit-sentiment-next
+   ```
+
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Run the development server**
+   ```bash
+   npm run dev
    ```
 
 4. **Open your browser**
    
-   Navigate to `http://localhost:8501` to view the dashboard.
+   Navigate to `http://localhost:3000` to view the dashboard.
 
 **That's it!** No configuration files, no API keys, no setup - just run and go! 🎉
 
@@ -60,12 +76,12 @@ These are **completely legal** public endpoints that don't require authenticatio
 
 ### Application Settings
 
-The sidebar includes several configurable options:
+The dashboard includes several configurable options:
 
 - **Reddit Posts to Analyze**: Number of posts to fetch (10-100)
 - **Top Stocks to Show**: Number of top mentioned stocks to display (5-20)
 - **Refresh Data**: Manual refresh of cached data
-- **Force Fresh Data**: Bypass cache and fetch new data
+- **Auto-refresh**: Configurable automatic refresh intervals
 
 ### Feed Types
 
@@ -73,46 +89,31 @@ The app automatically mixes different feeds for optimal sentiment analysis:
 - **70% Hot posts**: Popular posts with high engagement and comments
 - **30% New posts**: Fresh posts with the latest market sentiment
 
-## Deployment
-
-### Streamlit Cloud
-
-Since no credentials are required, deployment is incredibly simple:
-
-1. **Fork this repository** to your GitHub account
-2. **Go to [Streamlit Cloud](https://share.streamlit.io/)**
-3. **Connect your GitHub account**
-4. **Deploy your forked repository**
-5. **Done!** No secrets or configuration needed
-
-### Local Production Deployment
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run with production settings
-streamlit run app.py --server.port 8501 --server.address 0.0.0.0
-```
-
 ## Architecture
 
 ### Components
 
-- **`app.py`**: Main Streamlit application and UI
+**Backend (Python)**
+- **`app.py`**: Flask API server
 - **`data_controller.py`**: Orchestrates data processing pipeline
 - **`reddit_scraper.py`**: Reddit JSON feed integration
 - **`stock_extractor.py`**: Stock ticker extraction and validation
 - **`sentiment_analyzer.py`**: VADER sentiment analysis
 - **`models.py`**: Data models and structures
 
+**Frontend (Next.js)**
+- **`src/app/`**: Next.js app router pages and API routes
+- **`src/components/`**: React components for dashboard, charts, and UI
+- **`src/lib/services/`**: TypeScript services for data fetching
+- **`src/types/`**: TypeScript type definitions
+
 ### Data Flow
 
-1. **Reddit JSON Scraping**: Fetch posts from public JSON endpoints
+1. **Reddit JSON Scraping**: Backend fetches posts from public JSON endpoints
 2. **Ticker Extraction**: Identify stock symbols in posts and comments
 3. **Sentiment Analysis**: Calculate sentiment scores for each stock
-4. **Caching**: Store results to reduce requests
-5. **Display**: Present data in interactive dashboard
+4. **API Response**: Backend serves processed data via REST API
+5. **Frontend Display**: Next.js dashboard presents data with interactive charts
 
 ## Rate Limiting
 
@@ -131,7 +132,7 @@ No API rate limits to worry about! 🎉
 - **Causes**: Network issues, Reddit server problems, no stock mentions
 - **Solution**: 
   - Check internet connection
-  - Try "Force Fresh Data" button
+  - Try refreshing the page
   - Wait a moment and refresh (Reddit may be temporarily busy)
 
 #### Slow Loading
@@ -153,16 +154,20 @@ No API rate limits to worry about! 🎉
 |-------|-------|----------|
 | "Failed to fetch data" | Network or Reddit server issue | Check connection, try again |
 | "No stock data found" | No mentions in recent posts | Try different time or wait for new posts |
-| "Cache expired" | Old cached data | Click refresh or force fresh data |
+| "Cache expired" | Old cached data | Refresh the page or wait for auto-refresh |
 
 ### Debug Mode
 
 For debugging, you can run with additional logging:
 
 ```bash
-# Enable debug logging
-export STREAMLIT_LOGGER_LEVEL=debug
-streamlit run app.py
+# Backend debugging
+export FLASK_ENV=development
+python app.py
+
+# Frontend debugging
+cd reddit-sentiment-next
+npm run dev
 ```
 
 ## Testing
