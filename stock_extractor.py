@@ -36,13 +36,32 @@ class StockExtractor:
         
         # Common false positives to exclude (words that look like tickers but aren't)
         self.false_positives = {
+            # Common English words
             'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE',
             'OUR', 'OUT', 'DAY', 'GET', 'HAS', 'HIM', 'HIS', 'HOW', 'ITS', 'MAY', 'NEW', 'NOW',
             'OLD', 'SEE', 'TWO', 'WHO', 'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO',
-            'USE', 'WAY', 'WIN', 'YES', 'YET', 'BUY', 'LOL', 'WTF', 'OMG', 'CEO', 'IPO', 'SEC',
-            'FDA', 'NYSE', 'YOLO', 'HODL', 'DD', 'TA', 'PT', 'EOD', 'AH', 'PM', 'WSB', 'MOON',
+            'USE', 'WAY', 'WIN', 'YES', 'YET', 'BUY', 'WHEN', 'WHAT', 'WHERE', 'WHICH', 'WHILE',
+            'WITH', 'WORK', 'WOULD', 'WRITE', 'YEAR', 'YOUR', 'HAVE', 'BEEN', 'THERE', 'THEIR',
+            'WILL', 'FROM', 'THEY', 'KNOW', 'WANT', 'BEEN', 'GOOD', 'MUCH', 'SOME', 'TIME',
+            'VERY', 'THEN', 'THEM', 'WELL', 'WERE',
+            
+            # Reddit/WallStreetBets/Finance specific acronyms and slang
+            'DD', 'YOLO', 'HODL', 'WSB', 'TA', 'PT', 'EOD', 'AH', 'PM', 'MOON', 'LAMBO', 'TENDIES',
             'EDIT', 'TLDR', 'IMO', 'IMHO', 'FYI', 'BTW', 'ATH', 'ATL', 'YTD', 'QOQ', 'YOY',
-            'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'BTC', 'ETH'
+            'LOL', 'WTF', 'OMG', 'CEO', 'IPO', 'SEC', 'FDA', 'NYSE', 'NASDAQ', 'ETF', 'REIT',
+            'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'BTC', 'ETH',
+            'CALLS', 'PUTS', 'SELL', 'HOLD', 'DCA', 'FOMO', 'FUD', 'PUMP', 'DUMP',
+            'BEAR', 'BULL', 'APE', 'APES', 'RETARD', 'SMOOTH', 'BRAIN', 'DIAMOND', 'HANDS',
+            'PAPER', 'ROCKET', 'SQUEEZE', 'SHORT', 'LONG', 'MARGIN', 'LEVERAGE', 'OPTIONS',
+            'STRIKE', 'EXPIRY', 'THETA', 'DELTA', 'GAMMA', 'VEGA', 'GREEKS',
+            'CREDIT', 'DEBIT', 'SPREAD', 'IRON', 'CONDOR', 'BUTTERFLY', 'STRANGLE', 'STRADDLE',
+            'COLLAR', 'COVERED', 'NAKED', 'CASH', 'SECURED', 'PROTECTIVE', 'SYNTHETIC',
+            
+            # Internet/Social Media acronyms
+            'LMAO', 'ROFL', 'SMH', 'IDK', 'IKR', 'IIRC', 'AFAIK', 'ELI5', 'AMA', 'TIL', 'PSA',
+            
+            # Common abbreviations
+            'USA', 'NASA', 'FBI', 'CIA', 'IRS', 'DMV', 'GPS', 'COVID', 'WHO', 'CDC', 'NFL', 'NBA'
         }
     
     def extract_tickers(self, text: str) -> Set[str]:
