@@ -34,7 +34,7 @@ export class SentimentAnalyzer {
     const absScore = Math.abs(compound);
     let positive = 0.0;
     let negative = 0.0;
-    let neutral = 1.0 - absScore;
+    const neutral = 1.0 - absScore;
 
     if (compound > 0) {
       positive = absScore;

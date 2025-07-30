@@ -188,7 +188,7 @@ export function ConfigPanel({
               <div className="text-sm text-gray-600 space-y-2">
                 <p className="font-medium">How it works:</p>
                 <ul className="list-disc list-inside space-y-1 text-xs">
-                  <li>Fetches posts from r/wallstreetbets using Reddit's JSON API</li>
+                  <li>Fetches posts from r/wallstreetbets using Reddit&apos;s JSON API</li>
                   <li>Extracts stock tickers using pattern matching</li>
                   <li>Analyzes sentiment using natural language processing</li>
                   <li>Caches results for 30 minutes to improve performance</li>

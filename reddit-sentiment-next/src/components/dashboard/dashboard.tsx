@@ -16,7 +16,7 @@ export default function Dashboard() {
   const [stockData, setStockData] = useState<StockMention[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<ProcessingStatus | null>(null);
+  const [status, setStatus] = useState<ProcessingStatus | undefined>(undefined);
   const [config, setConfig] = useState<DashboardConfig>({
     post_limit: 200,
     stock_limit: 20,
