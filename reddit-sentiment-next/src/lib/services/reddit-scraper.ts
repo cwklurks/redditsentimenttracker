@@ -29,19 +29,34 @@ export class RedditScraper {
       await new Promise(resolve => setTimeout(resolve, this.requestDelay - timeSinceLast));
     }
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': this.userAgent,
-      },
-      next: { revalidate: 300 }, // Cache for 5 minutes
-    });
+    console.log('Making request to:', url);
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch data from Reddit: ${response.statusText}`);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': this.userAgent,
+          'Accept': 'application/json',
+        },
+        cache: 'no-store', // Disable caching for now to debug
+      });
+
+      console.log('Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Reddit API error:', errorText);
+        throw new Error(`Failed to fetch data from Reddit: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Successfully fetched data, posts count:', data?.data?.children?.length || 0);
+      
+      this.lastRequestTime = Date.now();
+      return data;
+    } catch (error) {
+      console.error('Request error:', error);
+      throw error;
     }
-
-    this.lastRequestTime = Date.now();
-    return response.json();
   }
 
   async getHotPosts(subredditName: string = 'wallstreetbets', limit: number = 100): Promise<RedditPost[]> {
