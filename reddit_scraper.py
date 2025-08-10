@@ -252,6 +252,10 @@ class RedditScraper:
                         data = None
                         continue
                 if data is None:
+                    # As a last resort, fall back to RSS/HTML to avoid hard failure on Cloud
+                    rss_posts = self._rss_fallback(subreddit_name, limit)
+                    if rss_posts:
+                        return rss_posts[:limit]
                     raise Exception(
                         f"All endpoints failed for r/{subreddit_name} hot listing (last status={self.last_http_status})"
                     )
@@ -326,6 +330,9 @@ class RedditScraper:
                         data = None
                         continue
                 if data is None:
+                    rss_posts = self._rss_fallback(subreddit_name, limit)
+                    if rss_posts:
+                        return rss_posts[:limit]
                     raise Exception(
                         f"All endpoints failed for r/{subreddit_name} new listing (last status={self.last_http_status})"
                     )
