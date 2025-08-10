@@ -151,7 +151,11 @@ class DataController:
             "cache_available": cached_data is not None,
             "cache_valid": cache_valid,
             "last_update": None,
-            "cache_expires": None
+            "cache_expires": None,
+            # Network diagnostics
+            "last_url": getattr(self.reddit_scraper, "last_url", None),
+            "last_http_status": getattr(self.reddit_scraper, "last_http_status", None),
+            "last_error": getattr(self.reddit_scraper, "last_error_message", None),
         }
         
         if cached_data:

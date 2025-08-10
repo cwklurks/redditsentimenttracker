@@ -1,25 +1,40 @@
-import requests
+import os
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+import requests
+
 from models import RedditPost
 
 
 class RedditScraper:
-    def __init__(self, user_agent: str = "RedditSentimentTracker/1.0"):
+    def __init__(self, user_agent: str = "web:reddit-sentiment-tracker:1.0 (https://redditsentiment.streamlit.app)"):
         """
         Initialize Reddit scraper using JSON feeds (no authentication required).
         
         Args:
             user_agent: User agent string for requests
         """
-        self.user_agent = user_agent
+        # Allow overriding UA via environment (Streamlit secrets can map to env)
+        self.user_agent = os.getenv("REDDIT_USER_AGENT", user_agent)
         self.session = requests.Session()
-        self.session.headers.update({'User-Agent': self.user_agent})
+        self.session.headers.update(
+            {
+                "User-Agent": self.user_agent,
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
         
         # Rate limiting - be respectful to Reddit
         self.request_delay = 1.0  # seconds between requests
         self.last_request_time = 0
+        
+        # Diagnostics (surfaced in UI to help debug Streamlit Cloud issues)
+        self.last_url: Optional[str] = None
+        self.last_http_status: Optional[int] = None
+        self.last_error_message: Optional[str] = None
     
     def is_authenticated(self) -> bool:
         """Check if Reddit scraper is ready (always True for JSON feeds)."""
@@ -42,21 +57,57 @@ class RedditScraper:
         Raises:
             Exception: If request fails
         """
-        # Rate limiting
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        if time_since_last < self.request_delay:
-            time.sleep(self.request_delay - time_since_last)
-        
-        try:
-            response = self.session.get(url, timeout=10)
-            response.raise_for_status()
-            self.last_request_time = time.time()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to fetch data from Reddit: {str(e)}")
-        except ValueError as e:
-            raise Exception(f"Failed to parse Reddit JSON response: {str(e)}")
+        # Rate limiting and simple exponential backoff for 429/403/503
+        backoff_seconds = 0.0
+        for attempt in range(5):
+            # Respect inter-request delay
+            current_time = time.time()
+            time_since_last = current_time - self.last_request_time
+            if time_since_last < self.request_delay:
+                time.sleep(self.request_delay - time_since_last)
+
+            if backoff_seconds > 0:
+                time.sleep(backoff_seconds)
+
+            try:
+                self.last_url = url
+                response = self.session.get(url, timeout=20)
+                self.last_http_status = response.status_code
+
+                # Backoff on common block codes
+                if response.status_code in (429, 403, 503):
+                    backoff_seconds = max(1.5, (backoff_seconds * 2) if backoff_seconds else 1.5)
+                    continue
+
+                response.raise_for_status()
+                self.last_request_time = time.time()
+                self.last_error_message = None
+                return response.json()
+            except requests.exceptions.RequestException as e:
+                self.last_error_message = f"Request error: {e}"
+                # Transient network errors: try again with backoff
+                backoff_seconds = max(1.5, (backoff_seconds * 2) if backoff_seconds else 1.5)
+                continue
+            except ValueError as e:
+                self.last_error_message = f"JSON parse error: {e}"
+                # Do not retry indefinitely on JSON errors
+                break
+
+        raise Exception(
+            f"Failed to fetch data from Reddit after retries (status={self.last_http_status}, url={self.last_url}). "
+            f"Last error: {self.last_error_message}"
+        )
+
+    def _build_listing_urls(self, subreddit_name: str, listing: str, current_limit: int, after: Optional[str]) -> List[str]:
+        """Construct a small set of candidate URLs to try in order."""
+        params = f"limit={current_limit}&raw_json=1"
+        if after:
+            params += f"&after={after}"
+        # Try api.reddit.com first; then fallback to www
+        return [
+            f"https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
+            f"https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
+        ]
     
     def get_hot_posts(self, subreddit_name: str = "wallstreetbets", limit: int = 100) -> List[RedditPost]:
         """
@@ -82,12 +133,20 @@ class RedditScraper:
                 remaining = limit - len(all_posts)
                 current_limit = min(posts_per_request, remaining)
                 
-                # Build URL with pagination
-                url = f"https://www.reddit.com/r/{subreddit_name}/hot.json?limit={current_limit}"
-                if after:
-                    url += f"&after={after}"
-                
-                data = self._make_request(url)
+                # Try a couple of endpoints (api.reddit.com then www)
+                data = None
+                for candidate_url in self._build_listing_urls(subreddit_name, "hot", current_limit, after):
+                    try:
+                        data = self._make_request(candidate_url)
+                        break
+                    except Exception:
+                        # Try the next candidate
+                        data = None
+                        continue
+                if data is None:
+                    raise Exception(
+                        f"All endpoints failed for r/{subreddit_name} hot listing (last status={self.last_http_status})"
+                    )
                 
                 if 'data' not in data or 'children' not in data['data']:
                     break
@@ -148,11 +207,18 @@ class RedditScraper:
                 remaining = limit - len(all_posts)
                 current_limit = min(posts_per_request, remaining)
                 
-                url = f"https://www.reddit.com/r/{subreddit_name}/new.json?limit={current_limit}"
-                if after:
-                    url += f"&after={after}"
-                
-                data = self._make_request(url)
+                data = None
+                for candidate_url in self._build_listing_urls(subreddit_name, "new", current_limit, after):
+                    try:
+                        data = self._make_request(candidate_url)
+                        break
+                    except Exception:
+                        data = None
+                        continue
+                if data is None:
+                    raise Exception(
+                        f"All endpoints failed for r/{subreddit_name} new listing (last status={self.last_http_status})"
+                    )
                 
                 if 'data' not in data or 'children' not in data['data']:
                     break
@@ -206,8 +272,22 @@ class RedditScraper:
             Exception: If fetch fails
         """
         try:
-            url = f"https://www.reddit.com/comments/{post_id}.json?limit={limit}"
-            data = self._make_request(url)
+            # Try api first, then www
+            data = None
+            for url in [
+                f"https://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
+                f"https://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
+            ]:
+                try:
+                    data = self._make_request(url)
+                    break
+                except Exception:
+                    data = None
+                    continue
+            if data is None:
+                raise Exception(
+                    f"All endpoints failed for comments on {post_id} (last status={self.last_http_status})"
+                )
             
             comments = []
             

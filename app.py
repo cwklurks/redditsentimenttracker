@@ -400,6 +400,19 @@ def main():
         merged.sort(key=lambda x: (x.mention_count, x.sentiment_score), reverse=True)
         combined_mentions = merged[:top_limit]
 
+    # Display network diagnostics (helpful on Streamlit Cloud when blocked)
+    with st.expander("Diagnostics", expanded=False):
+        status = controller.get_processing_status()
+        col_d1, col_d2, col_d3 = st.columns(3)
+        with col_d1:
+            st.caption(f"Cache valid: {bool(status.get('cache_valid'))}")
+            st.caption(f"Cache available: {bool(status.get('cache_available'))}")
+        with col_d2:
+            st.caption(f"Last URL: {status.get('last_url')}")
+            st.caption(f"Last HTTP status: {status.get('last_http_status')}")
+        with col_d3:
+            st.caption(f"Last error: {status.get('last_error')}")
+
     # Display
     display_metrics(combined_mentions)
     display_table(combined_mentions)
