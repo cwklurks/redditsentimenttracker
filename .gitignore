@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.env
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/
+
+# Data artifacts
+data/
+data_cache.json
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Node/Next (legacy frontend)
+node_modules/
+reddit-sentiment-next/

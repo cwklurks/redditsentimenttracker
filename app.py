@@ -4,11 +4,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import io
+import json
 import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from data_controller import DataController
 from models import StockMention
+import yfinance as yf
+
+# Constants
+HISTORY_DIR = "data/history"
+NOTES_PATH = "data/notes.json"
 
 # Load environment variables
 load_dotenv()
@@ -21,502 +28,423 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def check_environment_variables():
-    """Check if all required environment variables are set (none needed for JSON feeds!)."""
-    # No environment variables required for Reddit JSON feeds!
-    return []
+# Plotly simple black & white template
+PLOTLY_TEMPLATE = "plotly_white"
+GRAY = "#666666"
+DARK = "#000000"
+LIGHT = "#BBBBBB"
 
-def get_sentiment_color(sentiment_category: str) -> str:
-    """Get color for sentiment category based on simple black and white design."""
-    color_map = {
-        'Positive': '#000000',  # Black for positive
-        'Negative': '#666666',  # Dark gray for negative  
-        'Neutral': '#CCCCCC'    # Light gray for neutral
-    }
-    return color_map.get(sentiment_category, '#CCCCCC')
+
+def ensure_dirs():
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(NOTES_PATH), exist_ok=True)
+
+
+def load_notes() -> dict:
+    ensure_dirs()
+    if os.path.exists(NOTES_PATH):
+        try:
+            with open(NOTES_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_notes(notes: dict) -> None:
+    ensure_dirs()
+    with open(NOTES_PATH, "w") as f:
+        json.dump(notes, f, indent=2)
+
+
+def write_history(run_date: str, subreddit_key: str, df: pd.DataFrame) -> None:
+    ensure_dirs()
+    fname = os.path.join(HISTORY_DIR, f"mentions_{subreddit_key}_{run_date}.parquet")
+    try:
+        df.to_parquet(fname, index=False)
+    except Exception:
+        # Fallback to CSV if parquet unavailable
+        fname = fname.replace(".parquet", ".csv")
+        df.to_csv(fname, index=False)
+
+
+def load_history() -> pd.DataFrame:
+    ensure_dirs()
+    frames = []
+    for fn in sorted(os.listdir(HISTORY_DIR)):
+        path = os.path.join(HISTORY_DIR, fn)
+        try:
+            if fn.endswith(".parquet"):
+                frames.append(pd.read_parquet(path))
+            elif fn.endswith(".csv"):
+                frames.append(pd.read_csv(path))
+        except Exception:
+            continue
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    return pd.DataFrame(columns=[
+        "run_date", "subreddit", "ticker", "mention_count", "sentiment_score", "sentiment_category"
+    ])
+
 
 def format_sentiment_score(score: float) -> str:
-    """Format sentiment score with appropriate sign and precision."""
     if score > 0:
         return f"+{score:.3f}"
     else:
         return f"{score:.3f}"
 
-def display_stock_data(stock_mentions: list[StockMention]):
-    """Display stock data in a formatted table with better visibility."""
-    if not stock_mentions:
-        st.warning("📭 No stock data available to display.")
-        return
-    
-    # Create DataFrame for display
-    data = []
-    for stock in stock_mentions:
-        data.append({
-            'Ticker': stock.ticker,
-            'Mentions': stock.mention_count,
-            'Sentiment Score': format_sentiment_score(stock.sentiment_score),
-            'Sentiment': stock.sentiment_category,
-            'Last Updated': stock.last_updated.strftime('%H:%M:%S')
+
+def to_dataframe(stock_mentions: list[StockMention], subreddit: str, run_date: str) -> pd.DataFrame:
+    rows = []
+    for s in stock_mentions:
+        rows.append({
+            "run_date": run_date,
+            "subreddit": subreddit,
+            "ticker": s.ticker,
+            "mention_count": s.mention_count,
+            "sentiment_score": s.sentiment_score,
+            "sentiment_category": s.sentiment_category,
+            "last_updated": s.last_updated.strftime("%Y-%m-%d %H:%M:%S")
         })
-    
-    df = pd.DataFrame(data)
-    
-    # Display metrics
+    return pd.DataFrame(rows)
+
+
+def display_metrics(stock_mentions: list[StockMention]):
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📊 Total Stocks", len(stock_mentions))
+        st.metric("Total Stocks", len(stock_mentions))
     with col2:
         positive_count = sum(1 for s in stock_mentions if s.sentiment_category == 'Positive')
-        st.metric("😊 Positive", positive_count)
+        st.metric("Positive", positive_count)
     with col3:
         negative_count = sum(1 for s in stock_mentions if s.sentiment_category == 'Negative')
-        st.metric("😞 Negative", negative_count)
+        st.metric("Negative", negative_count)
     with col4:
         neutral_count = sum(1 for s in stock_mentions if s.sentiment_category == 'Neutral')
-        st.metric("😐 Neutral", neutral_count)
-    
-    st.subheader("📈 Stock Sentiment Analysis")
-    
-    # Create custom CSS for better visibility
-    st.markdown("""
-    <style>
-    .stDataFrame {
-        background-color: white;
-    }
-    .stDataFrame table {
-        background-color: white !important;
-        color: black !important;
-    }
-    .stDataFrame th {
-        background-color: #f0f0f0 !important;
-        color: black !important;
-        font-weight: bold !important;
-    }
-    .stDataFrame td {
-        background-color: white !important;
-        color: black !important;
-    }
-    /* Sentiment-specific styling */
-    .positive-sentiment {
-        background-color: #e8f5e8 !important;
-        color: #2d5a2d !important;
-        font-weight: bold !important;
-    }
-    .negative-sentiment {
-        background-color: #f5e8e8 !important;
-        color: #5a2d2d !important;
-        font-weight: bold !important;
-    }
-    .neutral-sentiment {
-        background-color: #f5f5f5 !important;
-        color: #333333 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Style the dataframe with proper background colors for sentiment
-    def style_sentiment_row(row):
-        sentiment = row['Sentiment']
-        if sentiment == 'Positive':
-            return ['background-color: #e8f5e8; color: #2d5a2d; font-weight: bold'] * len(row)
-        elif sentiment == 'Negative':
-            return ['background-color: #f5e8e8; color: #5a2d2d; font-weight: bold'] * len(row)
-        else:  # Neutral
-            return ['background-color: #f5f5f5; color: #333333'] * len(row)
-    
-    # Apply styling and display
-    styled_df = df.style.apply(style_sentiment_row, axis=1)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.metric("Neutral", neutral_count)
 
-def display_processing_status(controller: DataController):
-    """Display status information about data processing."""
-    status = controller.get_processing_status()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if status['reddit_scraper_ready']:
-            st.success("✅ Reddit JSON Feed Ready")
-        else:
-            st.error("❌ Reddit Connection Failed")
-    
-    with col2:
-        if status['cache_valid']:
-            st.info(f"💾 Using cached data (expires: {status['cache_expires'][:19]})")
-        elif status['cache_available']:
-            st.warning("⚠️ Cache expired, refresh recommended")
-        else:
-            st.info("🆕 No cached data available")
 
-def create_sentiment_charts(stock_mentions: list[StockMention]):
-    """Create interactive charts for sentiment analysis."""
+def display_table(stock_mentions: list[StockMention]):
     if not stock_mentions:
+        st.warning("No stock data available.")
         return
-    
-    # Prepare data for charts
     df = pd.DataFrame([
         {
-            'Ticker': stock.ticker,
-            'Mentions': stock.mention_count,
-            'Sentiment Score': stock.sentiment_score,
-            'Sentiment': stock.sentiment_category,
-            'Abs Sentiment': abs(stock.sentiment_score)
-        }
-        for stock in stock_mentions
+            'Ticker': s.ticker,
+            'Mentions': s.mention_count,
+            'Sentiment Score': format_sentiment_score(s.sentiment_score),
+            'Sentiment': s.sentiment_category,
+            'Last Updated': s.last_updated.strftime('%H:%M:%S')
+        } for s in stock_mentions
     ])
-    
-    # Create subplot layout
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=(
-            'Mention Count vs Sentiment Score',
-            'Sentiment Distribution',
-            'Top 10 Most Mentioned Stocks',
-            'Sentiment Intensity Ranking'
-        ),
-        specs=[[{"secondary_y": False}, {"type": "pie"}],
-               [{"type": "bar"}, {"type": "bar"}]]
+    st.subheader("Stock Sentiment")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def alerts_panel(stock_mentions: list[StockMention], min_mentions: int, min_sentiment: float):
+    triggered = [s for s in stock_mentions if s.mention_count >= min_mentions and s.sentiment_score >= min_sentiment]
+    if triggered:
+        st.subheader("Alerts")
+        for s in triggered:
+            st.success(f"{s.ticker}: {s.mention_count} mentions, sentiment {s.sentiment_score:+.3f}")
+
+
+def export_buttons(current_df: pd.DataFrame):
+    if current_df is None or current_df.empty:
+        # Show a small hint instead of leaving the section blank
+        st.caption("No data to export yet.")
+        return
+    csv = current_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        "Download CSV",
+        data=csv,
+        file_name=f"sentiment_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
     )
-    
-    # 1. Scatter plot: Mentions vs Sentiment
-    colors = ['red' if cat == 'Negative' else 'green' if cat == 'Positive' else 'gray' 
-              for cat in df['Sentiment']]
-    
-    fig.add_trace(
-        go.Scatter(
-            x=df['Mentions'],
-            y=df['Sentiment Score'],
-            mode='markers+text',
-            text=df['Ticker'],
-            textposition='top center',
-            marker=dict(size=10, color=colors, opacity=0.7),
-            name='Stocks',
-            hovertemplate='<b>%{text}</b><br>Mentions: %{x}<br>Sentiment: %{y:.3f}<extra></extra>'
-        ),
-        row=1, col=1
+
+
+def notes_ui(tickers: list[str]):
+    notes = load_notes()
+    st.subheader("Analyst Notes")
+    sel = st.selectbox("Select Ticker", options=["(none)"] + tickers)
+    if sel and sel != "(none)":
+        content = notes.get(sel, "")
+        new_content = st.text_area(f"Notes for {sel}", value=content, height=120)
+        if st.button("Save Notes"):
+            notes[sel] = new_content
+            save_notes(notes)
+            st.success("Notes saved.")
+
+# Plotly visuals (simple grayscale)
+
+def chart_scatter_current(df_current: pd.DataFrame):
+    if df_current.empty:
+        return
+    fig = px.scatter(
+        df_current,
+        x="mention_count", y="sentiment_score", text="ticker",
+        template=PLOTLY_TEMPLATE,
     )
-    
-    # 2. Pie chart: Sentiment distribution
-    sentiment_counts = df['Sentiment'].value_counts()
-    fig.add_trace(
-        go.Pie(
-            labels=sentiment_counts.index,
-            values=sentiment_counts.values,
-            hole=0.3,
-            name="Sentiment Distribution"
-        ),
-        row=1, col=2
-    )
-    
-    # 3. Bar chart: Top mentioned stocks
-    top_10 = df.nlargest(10, 'Mentions')
-    bar_colors = ['red' if cat == 'Negative' else 'green' if cat == 'Positive' else 'gray' 
-                  for cat in top_10['Sentiment']]
-    
-    fig.add_trace(
-        go.Bar(
-            x=top_10['Ticker'],
-            y=top_10['Mentions'],
-            marker_color=bar_colors,
-            name='Mentions',
-            hovertemplate='<b>%{x}</b><br>Mentions: %{y}<br>Sentiment: %{customdata}<extra></extra>',
-            customdata=top_10['Sentiment']
-        ),
-        row=2, col=1
-    )
-    
-    # 4. Sentiment intensity ranking
-    top_sentiment = df.nlargest(10, 'Abs Sentiment')
-    sentiment_colors = ['red' if score < 0 else 'green' for score in top_sentiment['Sentiment Score']]
-    
-    fig.add_trace(
-        go.Bar(
-            x=top_sentiment['Ticker'],
-            y=top_sentiment['Sentiment Score'],
-            marker_color=sentiment_colors,
-            name='Sentiment Intensity',
-            hovertemplate='<b>%{x}</b><br>Sentiment Score: %{y:.3f}<extra></extra>'
-        ),
-        row=2, col=2
-    )
-    
-    # Update layout
-    fig.update_layout(
-        height=800,
-        showlegend=False,
-        title_text="📊 Stock Sentiment Analysis Dashboard",
-        title_x=0.5
-    )
-    
-    # Update axes
-    fig.update_xaxes(title_text="Number of Mentions", row=1, col=1)
-    fig.update_yaxes(title_text="Sentiment Score", row=1, col=1)
-    fig.update_xaxes(title_text="Stock Ticker", row=2, col=1)
-    fig.update_yaxes(title_text="Mentions", row=2, col=1)
-    fig.update_xaxes(title_text="Stock Ticker", row=2, col=2)
-    fig.update_yaxes(title_text="Sentiment Score", row=2, col=2)
-    
+    fig.update_traces(marker=dict(color=DARK, size=10), textposition="top center")
+    fig.update_layout(xaxis_title="Mentions", yaxis_title="Sentiment Score", showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-def analyze_market_insights(stock_mentions: list[StockMention]):
-    """Generate actionable market insights from sentiment data."""
-    if not stock_mentions:
+
+def chart_treemap_current(df_current: pd.DataFrame):
+    if df_current.empty:
         return
-    
-    st.subheader("🧠 AI Market Insights")
-    
-    # Calculate key metrics
-    total_mentions = sum(stock.mention_count for stock in stock_mentions)
-    avg_sentiment = sum(stock.sentiment_score * stock.mention_count for stock in stock_mentions) / total_mentions if total_mentions > 0 else 0
-    
-    positive_stocks = [s for s in stock_mentions if s.sentiment_category == 'Positive']
-    negative_stocks = [s for s in stock_mentions if s.sentiment_category == 'Negative']
-    neutral_stocks = [s for s in stock_mentions if s.sentiment_category == 'Neutral']
-    
-    # Most mentioned with strong sentiment
-    strong_positive = [s for s in positive_stocks if s.sentiment_score > 0.5]
-    strong_negative = [s for s in negative_stocks if s.sentiment_score < -0.5]
-    
-    # High-volume discussions
-    high_volume = [s for s in stock_mentions if s.mention_count >= 5]
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 🎯 **Key Signals**")
-        
-        # Market sentiment overview
-        if avg_sentiment > 0.1:
-            st.success(f"📈 **Bullish Market Mood** (Average: +{avg_sentiment:.3f})")
-        elif avg_sentiment < -0.1:
-            st.error(f"📉 **Bearish Market Mood** (Average: {avg_sentiment:.3f})")
+    # Grayscale by sentiment score
+    colors = df_current["sentiment_score"].apply(lambda v: DARK if v > 0 else (GRAY if abs(v) < 0.1 else LIGHT))
+    fig = go.Figure(go.Treemap(
+        labels=df_current["ticker"],
+        parents=[""] * len(df_current),
+        values=df_current["mention_count"],
+        marker=dict(colors=colors),
+        textinfo="label+value"
+    ))
+    fig.update_layout(template=PLOTLY_TEMPLATE, margin=dict(t=10,l=0,r=0,b=0))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def chart_heatmap_history(df_hist: pd.DataFrame):
+    if df_hist.empty:
+        st.info("No history yet. Heatmap will appear after a few runs.")
+        return
+    pivot = (df_hist.groupby(["run_date", "ticker"], as_index=False)["mention_count"]
+                  .sum()
+                  .pivot(index="ticker", columns="run_date", values="mention_count").fillna(0))
+    fig = px.imshow(pivot, color_continuous_scale=["#FFFFFF", "#000000"], aspect="auto", template=PLOTLY_TEMPLATE)
+    fig.update_layout(coloraxis_showscale=False, xaxis_title="Date", yaxis_title="Ticker")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def chart_stacked_sentiment_history(df_hist: pd.DataFrame):
+    if df_hist.empty:
+        return
+    daily = (df_hist.groupby(["run_date", "sentiment_category"], as_index=False)
+                   .size().rename(columns={"size": "count"}))
+    cats = ["Positive", "Neutral", "Negative"]
+    fig = go.Figure()
+    for cat, color in [("Positive", DARK), ("Neutral", GRAY), ("Negative", LIGHT)]:
+        sub = daily[daily["sentiment_category"] == cat]
+        fig.add_trace(go.Bar(x=sub["run_date"], y=sub["count"], name=cat, marker_color=color))
+    fig.update_layout(barmode="stack", template=PLOTLY_TEMPLATE, xaxis_title="Date", yaxis_title="Posts")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def chart_price_overlay(ticker: str, df_hist: pd.DataFrame):
+    if not ticker:
+        return
+    # Build average sentiment per date
+    s = (df_hist[df_hist["ticker"] == ticker]
+         .groupby("run_date", as_index=False)["sentiment_score"].mean())
+    if s.empty:
+        st.info("No history for this ticker yet.")
+        return
+    try:
+        # Fetch price data (extend window to improve overlap odds)
+        price = yf.download(ticker, period="6mo", interval="1d", auto_adjust=True)
+        if price is None or price.empty:
+            st.info("No price data returned.")
+            return
+
+        # Locate a 'close' series robustly
+        close_series = None
+        if isinstance(price.columns, pd.MultiIndex):
+            try:
+                if "Close" in price.columns.get_level_values(0):
+                    close_df = price.xs("Close", axis=1, level=0)
+                    close_series = close_df.iloc[:, 0] if isinstance(close_df, pd.DataFrame) else close_df
+            except Exception:
+                pass
         else:
-            st.info(f"⚖️ **Neutral Market Mood** (Average: {avg_sentiment:.3f})")
-        
-        # Strong positive momentum
-        if strong_positive:
-            st.markdown("**🚀 Strong Bullish Signals:**")
-            for stock in sorted(strong_positive, key=lambda x: x.sentiment_score, reverse=True)[:3]:
-                st.markdown(f"• **{stock.ticker}**: {stock.mention_count} mentions, sentiment: +{stock.sentiment_score:.3f}")
-        
-        # Strong negative sentiment
-        if strong_negative:
-            st.markdown("**⚠️ Strong Bearish Signals:**")
-            for stock in sorted(strong_negative, key=lambda x: x.sentiment_score)[:3]:
-                st.markdown(f"• **{stock.ticker}**: {stock.mention_count} mentions, sentiment: {stock.sentiment_score:.3f}")
-    
-    with col2:
-        st.markdown("### 📊 **Trading Insights**")
-        
-        # High-volume discussions
-        if high_volume:
-            st.markdown("**🔥 Most Discussed (High Volume):**")
-            for stock in sorted(high_volume, key=lambda x: x.mention_count, reverse=True)[:5]:
-                sentiment_emoji = "📈" if stock.sentiment_category == "Positive" else "📉" if stock.sentiment_category == "Negative" else "➡️"
-                st.markdown(f"• **{stock.ticker}** {sentiment_emoji}: {stock.mention_count} mentions")
-        
-        # Sentiment distribution
-        st.markdown("**📈 Sentiment Breakdown:**")
-        st.markdown(f"• Positive: {len(positive_stocks)} stocks ({len(positive_stocks)/len(stock_mentions)*100:.1f}%)")
-        st.markdown(f"• Negative: {len(negative_stocks)} stocks ({len(negative_stocks)/len(stock_mentions)*100:.1f}%)")
-        st.markdown(f"• Neutral: {len(neutral_stocks)} stocks ({len(neutral_stocks)/len(stock_mentions)*100:.1f}%)")
-    
-    # Action recommendations
-    st.markdown("### 💡 **Actionable Recommendations**")
-    
-    recommendations = []
-    
-    # Strong momentum plays
-    if strong_positive:
-        top_positive = max(strong_positive, key=lambda x: x.sentiment_score * x.mention_count)
-        recommendations.append(f"🎯 **Momentum Play**: {top_positive.ticker} shows strong positive sentiment ({top_positive.sentiment_score:+.3f}) with {top_positive.mention_count} mentions")
-    
-    # Contrarian opportunities
-    if strong_negative and any(s.mention_count >= 3 for s in strong_negative):
-        top_negative = max([s for s in strong_negative if s.mention_count >= 3], key=lambda x: abs(x.sentiment_score))
-        recommendations.append(f"🔄 **Contrarian Opportunity**: {top_negative.ticker} heavily discussed ({top_negative.mention_count} mentions) with strong negative sentiment ({top_negative.sentiment_score:.3f}) - potential oversold bounce")
-    
-    # Volume without direction
-    neutral_high_vol = [s for s in neutral_stocks if s.mention_count >= 5]
-    if neutral_high_vol:
-        top_neutral = max(neutral_high_vol, key=lambda x: x.mention_count)
-        recommendations.append(f"👀 **Watch for Breakout**: {top_neutral.ticker} has high discussion volume ({top_neutral.mention_count} mentions) but neutral sentiment - awaiting catalyst")
-    
-    # Risk warnings
-    if len(negative_stocks) > len(positive_stocks) * 1.5:
-        recommendations.append("⚠️ **Risk Warning**: Bearish sentiment dominates - consider defensive positioning")
-    
-    for i, rec in enumerate(recommendations, 1):
-        st.markdown(f"{i}. {rec}")
-    
-    if not recommendations:
-        st.info("📊 Market sentiment appears balanced. Monitor for emerging trends.")
+            cols_lower = {c.lower(): c for c in price.columns}
+            if "close" in cols_lower:
+                close_series = price[cols_lower["close"]]
+            elif "adj close" in cols_lower:
+                close_series = price[cols_lower["adj close"]]
+            else:
+                num_cols = price.select_dtypes("number")
+                if not num_cols.empty:
+                    close_series = num_cols.iloc[:, 0]
 
-def create_sentiment_timeline(stock_mentions: list[StockMention]):
-    """Create a timeline view of when stocks were last updated."""
-    if not stock_mentions:
-        return
-        
-    st.subheader("⏰ Sentiment Timeline")
-    
-    # Group by update time
-    timeline_data = []
-    for stock in stock_mentions:
-        timeline_data.append({
-            'Stock': stock.ticker,
-            'Time': stock.last_updated.strftime('%H:%M:%S'),
-            'Sentiment': stock.sentiment_score,
-            'Category': stock.sentiment_category,
-            'Mentions': stock.mention_count
-        })
-    
-    df = pd.DataFrame(timeline_data)
-    
-    # Create timeline chart
-    fig = px.scatter(df, 
-                     x='Time', 
-                     y='Sentiment',
-                     size='Mentions',
-                     color='Category',
-                     hover_data=['Stock', 'Mentions'],
-                     color_discrete_map={'Positive': 'green', 'Negative': 'red', 'Neutral': 'gray'},
-                     title="Sentiment Evolution Over Time")
-    
-    fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+        if close_series is None or close_series.empty:
+            st.info("Could not find a Close/Adj Close series in price data.")
+            return
+
+        # Sentiment dates → datetime (midnight) and sort
+        s = s.rename(columns={"run_date": "date"})
+        s["date"] = pd.to_datetime(s["date"]).dt.normalize()
+        s = s.sort_values("date")
+
+        # Price to flat dataframe with 'date' and 'Close'
+        price_df = close_series.to_frame(name="Close").reset_index()
+        # Normalize date column name
+        if "Date" in price_df.columns:
+            price_df = price_df.rename(columns={"Date": "date"})
+        else:
+            price_df.columns = ["date" if i == 0 else price_df.columns[i] for i in range(len(price_df.columns))]
+        price_df["date"] = pd.to_datetime(price_df["date"]).dt.normalize()
+        price_df = price_df.sort_values("date")
+
+        # As-of merge (backward) within 7 days to handle weekends/holidays
+        merged = pd.merge_asof(
+            s, price_df[["date", "Close"]], on="date", direction="backward", tolerance=pd.Timedelta(days=7)
+        )
+        merged = merged.dropna(subset=["Close"])  # keep rows where we found a nearby price
+        if merged.empty:
+            st.info("No overlapping dates between sentiment and price (even within 7 days tolerance). Run on multiple days to build history.")
+            return
+
+        # Plot
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=merged["date"], y=merged["sentiment_score"], name="Sentiment", marker_color=GRAY))
+        fig.add_trace(go.Scatter(x=merged["date"], y=merged["Close"], name="Price", yaxis="y2", line=dict(color=DARK)))
+        fig.update_layout(
+            template=PLOTLY_TEMPLATE,
+            yaxis2=dict(overlaying="y", side="right", showgrid=False),
+            xaxis_title="Date",
+            yaxis_title="Avg Sentiment",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.info(f"Price data unavailable: {e}")
+
 
 def main():
-    """Main Streamlit application"""
-    
-    # Title and description
     st.title("📈 Reddit Stock Sentiment Tracker")
-    st.markdown("Monitor stock discussions and sentiment from r/wallstreetbets")
-    
-    # Show success message - no setup required!
-    st.success("✅ Ready to go! No API credentials required - using Reddit JSON feeds")
-    
-    # Initialize data controller
+    st.markdown("Monitor stock discussions and sentiment from selected subreddits.")
+
+    # Controller
     try:
         controller = DataController()
     except Exception as e:
-        st.error(f"❌ Failed to initialize application: {str(e)}")
+        st.error(f"Failed to initialize: {e}")
         return
-    
+
     # Sidebar controls
     with st.sidebar:
-        st.header("⚙️ Controls")
-        
-        # Settings
-        st.subheader("📊 Settings")
-        post_limit = st.slider("Reddit Posts to Analyze", 10, 500, 200, 10)
-        stock_limit = st.slider("Top Stocks to Show", 5, 50, 20, 1)
-        
-        # Store settings in session state to detect changes
-        if 'prev_post_limit' not in st.session_state:
-            st.session_state.prev_post_limit = post_limit
-        if 'prev_stock_limit' not in st.session_state:
-            st.session_state.prev_stock_limit = stock_limit
-        
-        # Check if settings changed
-        settings_changed = (
-            st.session_state.prev_post_limit != post_limit or 
-            st.session_state.prev_stock_limit != stock_limit
-        )
-        
-        if settings_changed:
-            st.session_state.prev_post_limit = post_limit
-            st.session_state.prev_stock_limit = stock_limit
-            # Clear cache when settings change
-            try:
-                controller.force_refresh(post_limit, stock_limit)
-                st.success("⚡ Settings updated! Fetching new data...")
-                st.rerun()
-            except:
-                pass  # Handle gracefully if controller not initialized yet
-        
-        # Refresh button - now clears cache for fresh data
-        if st.button("🔄 Refresh Data", type="primary", use_container_width=True):
-            with st.spinner("Fetching fresh data..."):
-                try:
-                    controller.force_refresh(post_limit, stock_limit)
-                    st.success("✅ Data refreshed successfully!")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Failed to refresh data: {str(e)}")
-        
-        # Force refresh option
-        if st.button("🚀 Force Fresh Data", use_container_width=True):
-            with st.spinner("Fetching fresh data from Reddit..."):
-                try:
-                    controller.force_refresh(post_limit, stock_limit)
-                    st.success("✅ Data refreshed successfully!")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Failed to refresh data: {str(e)}")
-        
-        # Display processing status
-        st.subheader("🔍 Status")
-        display_processing_status(controller)
-    
-    # Main content area
-    try:
-        # Show loading spinner
-        with st.spinner("Loading stock sentiment data..."):
-            stock_data = controller.process_reddit_data(post_limit, stock_limit)
-        
-        if stock_data:
-            display_stock_data(stock_data)
-            
-            # Show last update time
-            if stock_data:
-                last_update = max(stock.last_updated for stock in stock_data)
-                st.caption(f"🕐 Last updated: {last_update.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.header("Controls")
+        # Subreddits (multi-select). DataController currently targets r/wallstreetbets; we'll process in sequence.
+        subreddits = st.multiselect("Subreddits", ["wallstreetbets", "stocks", "options"], default=["wallstreetbets"])
+        post_limit = st.slider("Reddit Posts per Subreddit", 10, 500, 200, 10)
+        top_limit = st.slider("Top Stocks to Show", 5, 50, 20, 1)
 
-            # Create and display charts
-            create_sentiment_charts(stock_data)
-            analyze_market_insights(stock_data)
-            create_sentiment_timeline(stock_data)
-            
+        st.subheader("Filters")
+        min_mentions = st.number_input("Min Mentions", min_value=0, max_value=1000, value=0, step=1)
+        min_sentiment = st.number_input("Min Sentiment (compound)", min_value=-1.0, max_value=1.0, value=-1.0, step=0.1, format="%.1f")
+
+        st.subheader("Alerts")
+        alert_min_mentions = st.number_input("Alert: Min Mentions", min_value=1, max_value=1000, value=10, step=1)
+        alert_min_sent = st.number_input("Alert: Min Sentiment", min_value=-1.0, max_value=1.0, value=0.3, step=0.1, format="%.1f")
+
+        st.subheader("Export")
+        export_ready_placeholder = st.empty()
+
+        st.divider()
+        refresh = st.button("Refresh (use cache)")
+        force_refresh = st.button("Force Fresh Data")
+
+    # Fetch data per subreddit and combine
+    combined_mentions: list[StockMention] = []
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    all_current_frames = []
+
+    for sr in subreddits:
+        # DataController currently processes internally; use its cache/refresh
+        if force_refresh:
+            mentions = controller.force_refresh(post_limit, top_limit)
         else:
-            st.warning("📭 No stock data found. This could be due to:")
-            st.info("""
-            - Reddit rate limiting (please wait a moment)
-            - No stock mentions in recent posts
-            - Network connectivity issues
-            - Reddit server temporarily unavailable
-            
-            Try refreshing the data or check your internet connection.
-            """)
-            
-            # Try to show cached data as fallback
-            cached_data = controller.get_cached_data()
-            if cached_data:
-                st.subheader("📦 Showing Cached Data")
-                display_stock_data(cached_data)
-    
-    except Exception as e:
-        st.error(f"❌ An error occurred while processing data: {str(e)}")
-        
-        # Try to show cached data as fallback
-        try:
-            cached_data = controller.get_cached_data()
-            if cached_data:
-                st.subheader("📦 Showing Cached Data")
-                display_stock_data(cached_data)
-            else:
-                st.info("No cached data available for fallback.")
-        except Exception as cache_error:
-            st.error(f"❌ Also failed to load cached data: {str(cache_error)}")
-    
-    # Footer
+            mentions = controller.process_reddit_data(post_limit, top_limit)
+
+        # Apply simple runtime filters
+        mentions = [m for m in mentions if m.mention_count >= min_mentions and m.sentiment_score >= min_sentiment]
+
+        combined_mentions.extend(mentions)
+
+        # Persist per-subreddit snapshot for history
+        df_current = to_dataframe(mentions, sr, run_date)
+        all_current_frames.append(df_current)
+        write_history(run_date, sr, df_current)
+
+    # Combine across subreddits by ticker (sum counts, avg sentiment weighted by mentions)
+    if combined_mentions:
+        agg = {}
+        for m in combined_mentions:
+            if m.ticker not in agg:
+                agg[m.ticker] = {
+                    "ticker": m.ticker,
+                    "mention_count": 0,
+                    "sentiment_score_sum": 0.0,
+                    "sentiment_weight": 0,
+                    "sentiment_category": m.sentiment_category,
+                    "last_updated": m.last_updated,
+                }
+            agg[m.ticker]["mention_count"] += m.mention_count
+            agg[m.ticker]["sentiment_score_sum"] += m.sentiment_score * m.mention_count
+            agg[m.ticker]["sentiment_weight"] += m.mention_count
+            agg[m.ticker]["last_updated"] = max(agg[m.ticker]["last_updated"], m.last_updated)
+        # Build merged list
+        merged = []
+        for v in agg.values():
+            avg = v["sentiment_score_sum"] / max(1, v["sentiment_weight"])
+            cat = "Positive" if avg > 0.1 else ("Negative" if avg < -0.1 else "Neutral")
+            merged.append(StockMention(
+                ticker=v["ticker"],
+                mention_count=v["mention_count"],
+                sentiment_score=avg,
+                sentiment_category=cat,
+                last_updated=v["last_updated"]
+            ))
+        # sort and limit
+        merged.sort(key=lambda x: (x.mention_count, x.sentiment_score), reverse=True)
+        combined_mentions = merged[:top_limit]
+
+    # Display
+    display_metrics(combined_mentions)
+    display_table(combined_mentions)
+
+    # Alerts
+    alerts_panel(combined_mentions, alert_min_mentions, alert_min_sent)
+
+    # Export (render into the sidebar placeholder)
+    current_df_export = pd.concat(all_current_frames, ignore_index=True) if all_current_frames else pd.DataFrame()
+    with export_ready_placeholder.container():
+        export_buttons(current_df_export)
+
+    # Notes
+    notes_ui([m.ticker for m in combined_mentions])
+
+    # Visuals (current)
+    st.subheader("Visuals (Current Run)")
+    df_current_simple = pd.DataFrame([
+        {"ticker": m.ticker, "mention_count": m.mention_count, "sentiment_score": m.sentiment_score}
+        for m in combined_mentions
+    ])
+    colA, colB = st.columns(2)
+    with colA:
+        chart_scatter_current(df_current_simple)
+    with colB:
+        chart_treemap_current(df_current_simple)
+
+    # Visuals (History)
+    st.subheader("Visuals (History)")
+    hist = load_history()
+    colH1, colH2 = st.columns(2)
+    with colH1:
+        chart_heatmap_history(hist)
+    with colH2:
+        chart_stacked_sentiment_history(hist)
+
+    # Price overlay (choose a ticker)
+    st.subheader("Price Overlay")
+    sel_ticker = st.selectbox("Select Ticker", options=[m.ticker for m in combined_mentions]) if combined_mentions else ""
+    if sel_ticker:
+        chart_price_overlay(sel_ticker, hist)
+
     st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: #666666;'>
-        Built with Streamlit • Data from Reddit r/wallstreetbets • Sentiment analysis by VADER
-    </div>
-    """, unsafe_allow_html=True)
+    st.caption("Built with Streamlit • Data from Reddit • Simple grayscale visuals")
+
 
 if __name__ == "__main__":
     main()

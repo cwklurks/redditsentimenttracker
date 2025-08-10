@@ -2,6 +2,7 @@ streamlit
 requests
 pandas
 plotly
-textblob
 vaderSentiment
 python-dotenv
+yfinance
+pyarrow
