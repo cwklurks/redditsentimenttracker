@@ -451,9 +451,10 @@ def main():
             st.caption(f"Post sentiment distribution (source): {status['posts_sentiment_summary']} across {status.get('post_count')} posts")
 
     with st.expander("What does Sentiment Score mean?", expanded=False):
-        st.markdown("Sentiment Score is VADER compound in the range −1.0 to +1.0. We classify:")
-        st.markdown("- Positive: > +0.1\n- Neutral: between −0.1 and +0.1\n- Negative: < −0.1")
-        st.markdown("Confidence hint based on |score|:\n- Strong (≥ 0.5)\n- Moderate (0.3–0.5)\n- Weak (0.1–0.3)")
+        st.markdown("Sentiment Score uses VADER’s compound metric (range −1.0 to +1.0).")
+        st.markdown("\n**Standard categories (used in visuals):**\n- Positive: > +0.1\n- Neutral: between −0.1 and +0.1\n- Negative: < −0.1")
+        st.markdown("\n**Sentiment (Strict) shown in the table:**\n- Uses tighter cutoffs of ±0.2 to counter casual language that VADER often interprets as slightly positive.\n- This does not change the underlying scores; it’s an alternate label to make results more conservative.")
+        st.markdown("\n**Confidence (based on |score|):**\n- Strong (≥ 0.5)\n- Moderate (0.3–0.5)\n- Weak (0.1–0.3)\n- Very weak (< 0.1)")
 
     # Display
     display_metrics(combined_mentions)
