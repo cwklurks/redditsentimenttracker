@@ -128,12 +128,29 @@ def display_table(stock_mentions: list[StockMention]):
     if not stock_mentions:
         st.warning("No stock data available.")
         return
+    def confidence_label(score: float) -> str:
+        a = abs(score)
+        if a >= 0.5:
+            return "Strong"
+        if a >= 0.3:
+            return "Moderate"
+        if a >= 0.1:
+            return "Weak"
+        return "Very weak"
+    def strict_category(score: float) -> str:
+        if score > 0.2:
+            return "Positive"
+        if score < -0.2:
+            return "Negative"
+        return "Neutral"
     df = pd.DataFrame([
         {
             'Ticker': s.ticker,
             'Mentions': s.mention_count,
             'Sentiment Score': format_sentiment_score(s.sentiment_score),
             'Sentiment': s.sentiment_category,
+            'Sentiment (Strict)': strict_category(s.sentiment_score),
+            'Confidence': confidence_label(s.sentiment_score),
             'Last Updated': s.last_updated.strftime('%H:%M:%S')
         } for s in stock_mentions
     ])
@@ -430,6 +447,13 @@ def main():
             st.caption(f"Last error: {status.get('last_error')}")
             if available_before_limit:
                 st.caption(f"Available before limit: {available_before_limit}")
+        if status.get("posts_sentiment_summary"):
+            st.caption(f"Post sentiment distribution (source): {status['posts_sentiment_summary']} across {status.get('post_count')} posts")
+
+    with st.expander("What does Sentiment Score mean?", expanded=False):
+        st.markdown("Sentiment Score is VADER compound in the range −1.0 to +1.0. We classify:")
+        st.markdown("- Positive: > +0.1\n- Neutral: between −0.1 and +0.1\n- Negative: < −0.1")
+        st.markdown("Confidence hint based on |score|:\n- Strong (≥ 0.5)\n- Moderate (0.3–0.5)\n- Weak (0.1–0.3)")
 
     # Display
     display_metrics(combined_mentions)

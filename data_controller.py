@@ -178,6 +178,8 @@ class DataController:
             "last_url": getattr(self.reddit_scraper, "last_url", None),
             "last_http_status": getattr(self.reddit_scraper, "last_http_status", None),
             "last_error": getattr(self.reddit_scraper, "last_error_message", None),
+            "posts_sentiment_summary": None,
+            "post_count": None,
         }
         
         if cached_data:
@@ -185,6 +187,8 @@ class DataController:
             if cache_valid:
                 cache_time = datetime.fromisoformat(cached_data["timestamp"])
                 status["cache_expires"] = (cache_time + self.cache_duration).isoformat()
+            status["posts_sentiment_summary"] = cached_data.get("posts_sentiment_summary")
+            status["post_count"] = cached_data.get("post_count")
         
         return status
     
@@ -205,6 +209,7 @@ class DataController:
                 "timestamp": datetime.now().isoformat(),
                 "stock_mentions": self._serialize_stock_mentions(stock_mentions),
                 "post_count": len(posts),
+                "posts_sentiment_summary": self.get_sentiment_summary(posts),
                 "cache_duration_minutes": self.cache_duration.total_seconds() / 60
             }
             
