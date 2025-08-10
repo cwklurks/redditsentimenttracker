@@ -68,6 +68,21 @@ class RedditScraper:
         
         # Track if JSON endpoints are consistently blocked (for perf optimization)
         self._json_blocked_count = 0
+        
+        # Optional proxy (e.g., Cloudflare Worker) to bypass Cloud IP blocks
+        # Example: https://your-worker.example.workers.dev
+        self.proxy_base = os.getenv("REDDIT_PROXY_BASE", "").rstrip("/")
+
+    def _apply_proxy(self, url: str) -> str:
+        """If a proxy base is configured, route the request through it."""
+        if not self.proxy_base:
+            return url
+        try:
+            # Simple pass-through using query param; Worker should fetch decodeURIComponent(url)
+            from urllib.parse import quote
+            return f"{self.proxy_base}?url={quote(url, safe='')}&ua={quote(self.user_agent, safe='')}"
+        except Exception:
+            return url
     
     def is_authenticated(self) -> bool:
         """Check if Reddit scraper is ready (always True for JSON feeds)."""
@@ -103,8 +118,9 @@ class RedditScraper:
                 time.sleep(backoff_seconds)
 
             try:
-                self.last_url = url
-                response = self.session.get(url, timeout=20)
+                proxied = self._apply_proxy(url)
+                self.last_url = proxied
+                response = self.session.get(proxied, timeout=20)
                 self.last_http_status = response.status_code
 
                 # Backoff on common block codes
@@ -145,8 +161,9 @@ class RedditScraper:
         # If the regular client failed, try curl-cffi as a last resort (often bypasses 403/429)
         if self.cffi_session is not None:
             try:
-                self.last_url = url
-                resp = self.cffi_session.get(url, timeout=20)
+                proxied = self._apply_proxy(url)
+                self.last_url = proxied
+                resp = self.cffi_session.get(proxied, timeout=20)
                 self.last_http_status = getattr(resp, "status_code", None)
                 # curl-cffi raises for HTTP errors similar to requests when calling .raise_for_status()
                 resp.raise_for_status()
