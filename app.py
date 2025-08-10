@@ -315,12 +315,14 @@ def main():
     st.title("📈 Reddit Stock Sentiment Tracker")
     st.markdown("Monitor stock discussions and sentiment from selected subreddits.")
 
-    # Controller
-    try:
-        controller = DataController()
-    except Exception as e:
-        st.error(f"Failed to initialize: {e}")
-        return
+    # Controller (cache across reruns)
+    if "controller" not in st.session_state:
+        try:
+            st.session_state.controller = DataController()
+        except Exception as e:
+            st.error(f"Failed to initialize: {e}")
+            return
+    controller: DataController = st.session_state.controller
 
     # Sidebar controls
     with st.sidebar:
@@ -350,19 +352,28 @@ def main():
     run_date = datetime.now().strftime("%Y-%m-%d")
     all_current_frames = []
 
+    # To avoid multiple identical network calls on Cloud, fetch once then reuse for each subreddit label
+    # Network backoff window (skip network after recent failure)
+    now_ts = time.time()
+    backoff_until = st.session_state.get("network_backoff_until", 0)
+    network_skipped = False
+    latest_mentions = []
+    if now_ts < backoff_until and not force_refresh:
+        network_skipped = True
+        latest_mentions = controller.get_cached_data() or []
+    else:
+        try:
+            latest_mentions = controller.force_refresh(post_limit, top_limit) if force_refresh else controller.process_reddit_data(post_limit, top_limit)
+            # Success clears backoff
+            st.session_state["network_backoff_until"] = 0
+        except Exception:
+            # On error, set a 10-minute backoff and use cache if any
+            st.session_state["network_backoff_until"] = now_ts + 600
+            latest_mentions = controller.get_cached_data() or []
+
     for sr in subreddits:
-        # DataController currently processes internally; use its cache/refresh
-        if force_refresh:
-            mentions = controller.force_refresh(post_limit, top_limit)
-        else:
-            mentions = controller.process_reddit_data(post_limit, top_limit)
-
-        # Apply simple runtime filters
-        mentions = [m for m in mentions if m.mention_count >= min_mentions and m.sentiment_score >= min_sentiment]
-
+        mentions = [m for m in latest_mentions if m.mention_count >= min_mentions and m.sentiment_score >= min_sentiment]
         combined_mentions.extend(mentions)
-
-        # Persist per-subreddit snapshot for history
         df_current = to_dataframe(mentions, sr, run_date)
         all_current_frames.append(df_current)
         write_history(run_date, sr, df_current)
@@ -407,6 +418,9 @@ def main():
         with col_d1:
             st.caption(f"Cache valid: {bool(status.get('cache_valid'))}")
             st.caption(f"Cache available: {bool(status.get('cache_available'))}")
+            if network_skipped:
+                until = time.strftime('%H:%M:%S', time.localtime(st.session_state.get('network_backoff_until', 0)))
+                st.caption(f"Network backoff active until ~{until}")
         with col_d2:
             st.caption(f"Last URL: {status.get('last_url')}")
             st.caption(f"Last HTTP status: {status.get('last_http_status')}")

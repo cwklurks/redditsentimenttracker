@@ -111,8 +111,17 @@ class RedditScraper:
                 try:
                     return response.json()
                 except ValueError:
-                    # Some fallbacks return application/text but body is JSON
-                    return json.loads(response.text)
+                    # Some fallbacks return application/text but body is JSON or include preamble.
+                    text = response.text.strip()
+                    try:
+                        return json.loads(text)
+                    except Exception:
+                        # Attempt loose extraction of the first JSON object/array in the text
+                        start = min([i for i in [text.find("{"), text.find("[")] if i != -1] or [0])
+                        end = max(text.rfind("}"), text.rfind("]")) + 1
+                        if end > start:
+                            return json.loads(text[start:end])
+                        raise
             except requests.exceptions.RequestException as e:
                 self.last_error_message = f"Request error: {e}"
                 # Transient network errors: try again with backoff
@@ -136,7 +145,15 @@ class RedditScraper:
                 try:
                     return resp.json()
                 except Exception:
-                    return json.loads(getattr(resp, "text", "{}"))
+                    text = getattr(resp, "text", "").strip()
+                    try:
+                        return json.loads(text)
+                    except Exception:
+                        start = min([i for i in [text.find("{"), text.find("[")] if i != -1] or [0])
+                        end = max(text.rfind("}"), text.rfind("]")) + 1
+                        if end > start:
+                            return json.loads(text[start:end])
+                        raise
             except Exception as e:
                 self.last_error_message = f"curl-cffi fallback error: {e}"
 
@@ -154,7 +171,9 @@ class RedditScraper:
         return [
             f"https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
+            f"https://r.jina.ai/https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://r.jina.ai/http://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
+            f"https://r.jina.ai/https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
             f"https://r.jina.ai/http://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
         ]
     
@@ -326,7 +345,9 @@ class RedditScraper:
             for url in [
                 f"https://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
                 f"https://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
+                f"https://r.jina.ai/https://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
                 f"https://r.jina.ai/http://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
+                f"https://r.jina.ai/https://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
                 f"https://r.jina.ai/http://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
             ]:
                 try:
