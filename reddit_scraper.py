@@ -216,6 +216,10 @@ class RedditScraper:
             except Exception:
                 continue
         return []
+
+    def get_rss_posts(self, subreddit_name: str = "wallstreetbets", limit: int = 100) -> List[RedditPost]:
+        """Public method to fetch posts via RSS/HTML only (no JSON)."""
+        return self._rss_fallback(subreddit_name, limit)
     
     def get_hot_posts(self, subreddit_name: str = "wallstreetbets", limit: int = 100) -> List[RedditPost]:
         """

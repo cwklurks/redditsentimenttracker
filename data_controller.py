@@ -49,12 +49,29 @@ class DataController:
             
             # Step 2: Scrape Reddit data
             self.logger.info("Fetching Reddit posts...")
+            posts = []
+            errors: list[str] = []
+            # Try JSON 'hot'
             try:
                 posts = self.reddit_scraper.get_hot_posts(limit=post_limit)
-            except Exception as first_error:
-                # Fallback to 'new' listing if 'hot' is blocked
-                self.logger.warning(f"Hot listing failed ({first_error}); trying 'new' listing")
-                posts = self.reddit_scraper.get_new_posts(limit=post_limit)
+            except Exception as e_hot:
+                errors.append(str(e_hot))
+                self.logger.warning(f"Hot listing failed ({e_hot}); trying 'new' listing")
+            # If still empty, try JSON 'new'
+            if not posts:
+                try:
+                    posts = self.reddit_scraper.get_new_posts(limit=post_limit)
+                except Exception as e_new:
+                    errors.append(str(e_new))
+                    self.logger.warning(f"New listing failed ({e_new}); trying RSS fallback")
+            # If still empty, use RSS-only fallback
+            if not posts:
+                try:
+                    posts = self.reddit_scraper.get_rss_posts(limit=post_limit)
+                except Exception as e_rss:
+                    errors.append(str(e_rss))
+            if not posts:
+                raise Exception("; ".join(errors) or "No posts fetched")
             
             if not posts:
                 self.logger.warning("No posts retrieved from Reddit")
