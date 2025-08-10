@@ -23,6 +23,6 @@ data_cache.json
 # Notebooks
 .ipynb_checkpoints/
 
-# Node/Next (legacy frontend)
+# Node (legacy, removed frontend)
 node_modules/
 reddit-sentiment-next/
