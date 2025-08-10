@@ -49,7 +49,12 @@ class DataController:
             
             # Step 2: Scrape Reddit data
             self.logger.info("Fetching Reddit posts...")
-            posts = self.reddit_scraper.get_hot_posts(limit=post_limit)
+            try:
+                posts = self.reddit_scraper.get_hot_posts(limit=post_limit)
+            except Exception as first_error:
+                # Fallback to 'new' listing if 'hot' is blocked
+                self.logger.warning(f"Hot listing failed ({first_error}); trying 'new' listing")
+                posts = self.reddit_scraper.get_new_posts(limit=post_limit)
             
             if not posts:
                 self.logger.warning("No posts retrieved from Reddit")

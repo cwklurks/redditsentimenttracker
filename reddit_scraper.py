@@ -1,4 +1,5 @@
 import os
+import json
 import time
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -49,8 +50,11 @@ class RedditScraper:
             except Exception:
                 self.cffi_session = None
         
-        # Rate limiting - be respectful to Reddit
-        self.request_delay = 1.0  # seconds between requests
+        # Rate limiting - be respectful to Reddit (allow override)
+        try:
+            self.request_delay = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
+        except Exception:
+            self.request_delay = 1.5  # seconds between requests
         self.last_request_time = 0
         
         # Diagnostics (surfaced in UI to help debug Streamlit Cloud issues)
@@ -104,7 +108,11 @@ class RedditScraper:
                 response.raise_for_status()
                 self.last_request_time = time.time()
                 self.last_error_message = None
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError:
+                    # Some fallbacks return application/text but body is JSON
+                    return json.loads(response.text)
             except requests.exceptions.RequestException as e:
                 self.last_error_message = f"Request error: {e}"
                 # Transient network errors: try again with backoff
@@ -125,7 +133,10 @@ class RedditScraper:
                 resp.raise_for_status()
                 self.last_request_time = time.time()
                 self.last_error_message = None
-                return resp.json()
+                try:
+                    return resp.json()
+                except Exception:
+                    return json.loads(getattr(resp, "text", "{}"))
             except Exception as e:
                 self.last_error_message = f"curl-cffi fallback error: {e}"
 
@@ -139,10 +150,12 @@ class RedditScraper:
         params = f"limit={current_limit}&raw_json=1"
         if after:
             params += f"&after={after}"
-        # Try api.reddit.com first; then fallback to www
+        # Try api.reddit.com first; then fallback to www; then a text mirror via r.jina.ai
         return [
             f"https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
+            f"https://r.jina.ai/http://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
+            f"https://r.jina.ai/http://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
         ]
     
     def get_hot_posts(self, subreddit_name: str = "wallstreetbets", limit: int = 100) -> List[RedditPost]:
@@ -313,6 +326,8 @@ class RedditScraper:
             for url in [
                 f"https://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
                 f"https://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
+                f"https://r.jina.ai/http://api.reddit.com/comments/{post_id}?limit={limit}&raw_json=1",
+                f"https://r.jina.ai/http://www.reddit.com/comments/{post_id}.json?limit={limit}&raw_json=1",
             ]:
                 try:
                     data = self._make_request(url)
