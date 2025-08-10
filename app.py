@@ -379,6 +379,7 @@ def main():
         write_history(run_date, sr, df_current)
 
     # Combine across subreddits by ticker (sum counts, avg sentiment weighted by mentions)
+    available_before_limit = 0
     if combined_mentions:
         agg = {}
         for m in combined_mentions:
@@ -409,6 +410,7 @@ def main():
             ))
         # sort and limit
         merged.sort(key=lambda x: (x.mention_count, x.sentiment_score), reverse=True)
+        available_before_limit = len(merged)
         combined_mentions = merged[:top_limit]
 
     # Display network diagnostics (helpful on Streamlit Cloud when blocked)
@@ -426,9 +428,13 @@ def main():
             st.caption(f"Last HTTP status: {status.get('last_http_status')}")
         with col_d3:
             st.caption(f"Last error: {status.get('last_error')}")
+            if available_before_limit:
+                st.caption(f"Available before limit: {available_before_limit}")
 
     # Display
     display_metrics(combined_mentions)
+    if available_before_limit:
+        st.caption(f"Showing {len(combined_mentions)} of {min(top_limit, available_before_limit)} (filters applied)")
     display_table(combined_mentions)
 
     # Alerts
