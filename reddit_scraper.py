@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover - optional dependency
     cffi_requests = None  # type: ignore
 
 from models import RedditPost
+from bs4 import BeautifulSoup
 
 
 class RedditScraper:
@@ -167,15 +168,54 @@ class RedditScraper:
         params = f"limit={current_limit}&raw_json=1"
         if after:
             params += f"&after={after}"
-        # Try api.reddit.com first; then fallback to www; then a text mirror via r.jina.ai
+        # Try multiple origins; include old/i subdomains and r.jina.ai mirror
         return [
             f"https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
+            f"https://old.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
+            f"https://i.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
             f"https://r.jina.ai/https://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://r.jina.ai/http://api.reddit.com/r/{subreddit_name}/{listing}?{params}",
             f"https://r.jina.ai/https://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
             f"https://r.jina.ai/http://www.reddit.com/r/{subreddit_name}/{listing}.json?{params}",
         ]
+
+    def _rss_fallback(self, subreddit_name: str, limit: int) -> List[RedditPost]:
+        """Parse subreddit RSS/HTML as a last resort when JSON endpoints are blocked."""
+        urls = [
+            f"https://www.reddit.com/r/{subreddit_name}/.rss",
+            f"https://old.reddit.com/r/{subreddit_name}/.rss",
+            f"https://r.jina.ai/https://www.reddit.com/r/{subreddit_name}/",
+            f"https://r.jina.ai/http://www.reddit.com/r/{subreddit_name}/",
+        ]
+        for url in urls:
+            try:
+                if self.cffi_session is not None and url.startswith("http"):
+                    resp = self.cffi_session.get(url, timeout=20)
+                else:
+                    resp = self.session.get(url, timeout=20)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+                entries = soup.find_all(["entry", "item"]) or soup.select(".Post, .thing")
+                posts: List[RedditPost] = []
+                for e in entries[:limit]:
+                    title_tag = e.find("title") if hasattr(e, 'find') else None
+                    title = title_tag.get_text(strip=True) if title_tag else (e.get_text(strip=True) if hasattr(e, 'get_text') else "")
+                    content_tag = (e.find("content") or e.find("summary") or e.find("description")) if hasattr(e, 'find') else None
+                    content = content_tag.get_text(strip=True) if content_tag else ""
+                    id_tag = (e.find("id") or e.find("guid") or e.find("link")) if hasattr(e, 'find') else None
+                    pid = (id_tag.get_text(strip=True) if id_tag and id_tag.name != "link" else (id_tag.get("href") if id_tag else title)) or title
+                    date_tag = (e.find("updated") or e.find("pubdate") or e.find("published")) if hasattr(e, 'find') else None
+                    try:
+                        dt = datetime.fromisoformat(date_tag.get_text(strip=True).replace("Z", "+00:00")) if date_tag else datetime.utcnow()
+                    except Exception:
+                        dt = datetime.utcnow()
+                    posts.append(RedditPost(id=pid, title=title, content=content, comments=[], created_utc=dt, score=0))
+                if posts:
+                    return posts
+            except Exception:
+                continue
+        return []
     
     def get_hot_posts(self, subreddit_name: str = "wallstreetbets", limit: int = 100) -> List[RedditPost]:
         """
@@ -250,6 +290,8 @@ class RedditScraper:
                 if not after:
                     break  # No more pages
             
+            if not all_posts:
+                all_posts = self._rss_fallback(subreddit_name, limit)
             return all_posts[:limit]  # Ensure we don't exceed requested limit
             
         except Exception as e:
@@ -320,6 +362,8 @@ class RedditScraper:
                 if not after:
                     break
             
+            if not all_posts:
+                all_posts = self._rss_fallback(subreddit_name, limit)
             return all_posts[:limit]
             
         except Exception as e:

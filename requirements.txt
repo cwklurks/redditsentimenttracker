@@ -7,3 +7,4 @@ vaderSentiment
 python-dotenv
 yfinance
 pyarrow
+beautifulsoup4
