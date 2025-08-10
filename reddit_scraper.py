@@ -1,10 +1,14 @@
 import os
 import json
 import time
+import warnings
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 import requests
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+# Suppress XML warning for RSS feeds
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 try:
     # Optional: higher-fidelity HTTP client that can impersonate a browser (helps behind Cloudflare)
     from curl_cffi import requests as cffi_requests  # type: ignore
@@ -12,7 +16,6 @@ except Exception:  # pragma: no cover - optional dependency
     cffi_requests = None  # type: ignore
 
 from models import RedditPost
-from bs4 import BeautifulSoup
 
 
 class RedditScraper:
@@ -62,6 +65,9 @@ class RedditScraper:
         self.last_url: Optional[str] = None
         self.last_http_status: Optional[int] = None
         self.last_error_message: Optional[str] = None
+        
+        # Track if JSON endpoints are consistently blocked (for perf optimization)
+        self._json_blocked_count = 0
     
     def is_authenticated(self) -> bool:
         """Check if Reddit scraper is ready (always True for JSON feeds)."""
@@ -104,11 +110,14 @@ class RedditScraper:
                 # Backoff on common block codes
                 if response.status_code in (429, 403, 503):
                     backoff_seconds = max(1.5, (backoff_seconds * 2) if backoff_seconds else 1.5)
+                    self._json_blocked_count += 1
                     continue
 
                 response.raise_for_status()
                 self.last_request_time = time.time()
                 self.last_error_message = None
+                # Success resets block counter
+                self._json_blocked_count = 0
                 try:
                     return response.json()
                 except ValueError:
@@ -143,6 +152,7 @@ class RedditScraper:
                 resp.raise_for_status()
                 self.last_request_time = time.time()
                 self.last_error_message = None
+                self._json_blocked_count = 0
                 try:
                     return resp.json()
                 except Exception:
@@ -157,11 +167,16 @@ class RedditScraper:
                         raise
             except Exception as e:
                 self.last_error_message = f"curl-cffi fallback error: {e}"
+                self._json_blocked_count += 1
 
         raise Exception(
             f"Failed to fetch data from Reddit after retries (status={self.last_http_status}, url={self.last_url}). "
             f"Last error: {self.last_error_message}"
         )
+    
+    def is_json_likely_blocked(self) -> bool:
+        """Check if JSON endpoints appear to be consistently blocked."""
+        return self._json_blocked_count >= 3
 
     def _build_listing_urls(self, subreddit_name: str, listing: str, current_limit: int, after: Optional[str]) -> List[str]:
         """Construct a small set of candidate URLs to try in order."""
@@ -235,6 +250,11 @@ class RedditScraper:
         Raises:
             Exception: If fetch fails
         """
+        # Skip JSON attempts if we've been blocked multiple times
+        if self.is_json_likely_blocked():
+            posts = self._rss_fallback(subreddit_name, limit)
+            if posts:
+                return posts
         try:
             all_posts = []
             after = None
@@ -316,6 +336,10 @@ class RedditScraper:
         Returns:
             List of RedditPost objects
         """
+        if self.is_json_likely_blocked():
+            posts = self._rss_fallback(subreddit_name, limit)
+            if posts:
+                return posts
         try:
             all_posts = []
             after = None

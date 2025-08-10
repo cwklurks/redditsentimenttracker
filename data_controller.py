@@ -24,7 +24,7 @@ class DataController:
         self.cache_file = "data_cache.json"
         
         # Set up logging
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
         self.logger = logging.getLogger(__name__)
     
     def process_reddit_data(self, post_limit: int = 200, top_stocks_limit: int = 20) -> List[StockMention]:
