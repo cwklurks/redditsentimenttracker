@@ -4,6 +4,11 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 import requests
+try:
+    # Optional: higher-fidelity HTTP client that can impersonate a browser (helps behind Cloudflare)
+    from curl_cffi import requests as cffi_requests  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    cffi_requests = None  # type: ignore
 
 from models import RedditPost
 
@@ -26,6 +31,23 @@ class RedditScraper:
                 "Accept-Language": "en-US,en;q=0.9",
             }
         )
+        
+        # Optional curl-cffi session for environments blocked by Reddit/Cloudflare
+        self.cffi_session = None
+        if cffi_requests is not None:
+            try:
+                self.cffi_session = cffi_requests.Session()
+                # Impersonate a modern Chrome; enable http2 for realism
+                self.cffi_session.impersonate = os.getenv("CFFI_IMPERSONATE", "chrome").lower()
+                self.cffi_session.headers.update(
+                    {
+                        "User-Agent": self.user_agent,
+                        "Accept": "application/json, text/plain, */*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    }
+                )
+            except Exception:
+                self.cffi_session = None
         
         # Rate limiting - be respectful to Reddit
         self.request_delay = 1.0  # seconds between requests
@@ -92,6 +114,20 @@ class RedditScraper:
                 self.last_error_message = f"JSON parse error: {e}"
                 # Do not retry indefinitely on JSON errors
                 break
+
+        # If the regular client failed, try curl-cffi as a last resort (often bypasses 403/429)
+        if self.cffi_session is not None:
+            try:
+                self.last_url = url
+                resp = self.cffi_session.get(url, timeout=20)
+                self.last_http_status = getattr(resp, "status_code", None)
+                # curl-cffi raises for HTTP errors similar to requests when calling .raise_for_status()
+                resp.raise_for_status()
+                self.last_request_time = time.time()
+                self.last_error_message = None
+                return resp.json()
+            except Exception as e:
+                self.last_error_message = f"curl-cffi fallback error: {e}"
 
         raise Exception(
             f"Failed to fetch data from Reddit after retries (status={self.last_http_status}, url={self.last_url}). "
