@@ -27,7 +27,9 @@ class RedditScraper:
             user_agent: User agent string for requests
         """
         # Allow overriding UA via environment (Streamlit secrets can map to env)
+        # TODO: [Security] Add user agent validation to ensure format compliance and prevent injection attacks
         self.user_agent = os.getenv("REDDIT_USER_AGENT", user_agent)
+        # TODO: [Performance] Add connection pooling for high-volume scraping to reduce connection overhead
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -69,6 +71,7 @@ class RedditScraper:
         # Track if JSON endpoints are consistently blocked (for perf optimization)
         self._json_blocked_count = 0
         
+        # TODO: [Architecture] Extract proxy configuration to separate class for better maintainability
         # Optional proxy (e.g., Cloudflare Worker) to bypass Cloud IP blocks
         # Example: https://your-worker.example.workers.dev
         self.proxy_base = os.getenv("REDDIT_PROXY_BASE", "").rstrip("/")

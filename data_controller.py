@@ -21,6 +21,7 @@ class DataController:
         self.stock_extractor = StockExtractor()
         self.sentiment_analyzer = SentimentAnalyzer()
         self.cache_duration = timedelta(minutes=cache_duration_minutes)
+        # TODO: [Configuration] Make cache file path configurable via environment variables or config file
         self.cache_file = "data_cache.json"
         
         # Set up logging
@@ -39,6 +40,7 @@ class DataController:
             List of StockMention objects with sentiment analysis
         """
         try:
+            # TODO: [Reliability] Implement exponential backoff for API failures to handle rate limiting gracefully
             self.logger.info(f"Starting data processing pipeline with {post_limit} posts")
             
             # Step 1: Check cache first
@@ -130,6 +132,7 @@ class DataController:
             
         except Exception as e:
             self.logger.error(f"Error in data processing pipeline: {str(e)}")
+            # TODO: [Architecture] Split into repository and service layers for better separation of concerns
             return self._get_fallback_data()
     
     def get_cached_data(self) -> Optional[List[StockMention]]:

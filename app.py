@@ -45,6 +45,7 @@ def load_notes() -> dict:
     if os.path.exists(NOTES_PATH):
         try:
             with open(NOTES_PATH, "r") as f:
+                # TODO: [Security] Add JSON schema validation for notes file to prevent malformed data
                 return json.load(f)
         except Exception:
             return {}
@@ -195,6 +196,7 @@ def notes_ui(tickers: list[str]):
 # Plotly visuals (simple grayscale)
 
 def chart_scatter_current(df_current: pd.DataFrame):
+    # TODO: [Architecture] Create dedicated visualization component classes for better code organization
     if df_current.empty:
         return
     fig = px.scatter(
@@ -473,6 +475,7 @@ def main():
     # Notes
     notes_ui([m.ticker for m in combined_mentions])
 
+    # TODO: [Enhancement] Add WebSocket support for real-time sentiment updates without manual refresh
     # Visuals (current)
     st.subheader("Visuals (Current Run)")
     df_current_simple = pd.DataFrame([

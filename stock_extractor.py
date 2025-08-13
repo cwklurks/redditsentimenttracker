@@ -6,6 +6,7 @@ from models import RedditPost
 
 class StockExtractor:
     def __init__(self):
+        # TODO: [Performance] Replace hardcoded ticker whitelist with database/API lookup for real-time symbol validation
         # Common stock tickers - this is a subset of popular tickers to filter false positives
         # In a production system, this would be loaded from a comprehensive stock database
         self.valid_tickers = {
@@ -30,10 +31,10 @@ class StockExtractor:
             'BABA', 'JD', 'PDD', 'DIDI', 'LUCID', 'LCID', 'RIVN', 'SOFI', 'HOOD', 'RBLX'
         }
         
-        # Regex pattern to match potential stock tickers
         # Matches 1-6 uppercase letters with proper word boundaries
         self.ticker_pattern = re.compile(r'(?:^|[\s$\(\)\[\],/])([A-Z]{1,6})(?=[\s$\(\)\[\],/.!?;:]|$)', re.MULTILINE)
         
+        # TODO: [Enhancement] Add machine learning false positive detection to improve accuracy beyond rule-based filtering
         # Common false positives to exclude (words that look like tickers but aren't)
         self.false_positives = {
             # Common English words
@@ -65,15 +66,6 @@ class StockExtractor:
         }
     
     def extract_tickers(self, text: str) -> Set[str]:
-        """
-        Extract potential stock tickers from text using regex patterns.
-        
-        Args:
-            text: Input text to search for stock tickers
-            
-        Returns:
-            Set of valid stock ticker symbols found in the text
-        """
         if not text:
             return set()
         

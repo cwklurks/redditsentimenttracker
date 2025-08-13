@@ -6,6 +6,7 @@ from models import RedditPost, SentimentResult
 class SentimentAnalyzer:
     def __init__(self):
         """Initialize the sentiment analyzer with VADER."""
+        # TODO: [Enhancement] Implement multi-model sentiment ensemble for improved accuracy across different text types
         self.analyzer = SentimentIntensityAnalyzer()
     
     def get_sentiment_score(self, text: str) -> SentimentResult:

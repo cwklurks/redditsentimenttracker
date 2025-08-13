@@ -6,6 +6,7 @@ from models import RedditPost
 
 
 class TestRedditScraper(unittest.TestCase):
+    # TODO: [Testing] Add integration tests for proxy scenarios to ensure failover works correctly
     def setUp(self):
         """Set up test fixtures before each test method."""
         self.scraper = RedditScraper()
