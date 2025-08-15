@@ -161,6 +161,97 @@ class DataController:
         self._clear_cache()
         return self.process_reddit_data(post_limit, top_stocks_limit)
     
+    def process_reddit_data_for_subreddits(self, subreddits: List[str], posts_per_sub: int = 200, top_stocks_limit: int = 20, use_cache: bool = True) -> List[StockMention]:
+        """
+        Fetch posts per subreddit in parallel, then extract mentions and analyze sentiment across all posts.
+        Polite threading: max 3 workers; each thread enforces its own ~1s delay.
+        """
+        try:
+            # Check cache first (optional)
+            if use_cache:
+                cached_data = self._load_cache()
+                if cached_data and self._is_cache_valid(cached_data):
+                    self.logger.info("Using cached data")
+                    return self._deserialize_stock_mentions(cached_data['stock_mentions'])
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def fetch_subreddit(sub: str) -> List[RedditPost]:
+                sc = RedditScraper(request_delay=1.0)
+                try:
+                    return sc.get_hot_posts(subreddit_name=sub, limit=posts_per_sub)
+                except Exception:
+                    try:
+                        return sc.get_new_posts(subreddit_name=sub, limit=posts_per_sub)
+                    except Exception:
+                        return sc.get_rss_posts(subreddit_name=sub, limit=posts_per_sub)
+
+            results: Dict[str, List[RedditPost]] = {}
+            max_workers = max(1, min(len(subreddits), 3))
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futs = {ex.submit(fetch_subreddit, s): s for s in subreddits}
+                for f in as_completed(futs):
+                    sub = futs[f]
+                    try:
+                        results[sub] = f.result() or []
+                    except Exception as e:
+                        self.logger.warning(f"Fetch failed for r/{sub}: {e}")
+                        results[sub] = []
+
+            # Combine and de-duplicate by post id
+            seen_ids = set()
+            posts: List[RedditPost] = []
+            for lst in results.values():
+                for p in lst:
+                    if p.id in seen_ids:
+                        continue
+                    seen_ids.add(p.id)
+                    posts.append(p)
+
+            if not posts:
+                raise Exception("No posts fetched across subreddits")
+
+            top_mentioned = self.stock_extractor.get_top_mentioned(posts, limit=top_stocks_limit)
+            if not top_mentioned:
+                return []
+
+            stock_mentions: List[StockMention] = []
+            for ticker, mention_count in top_mentioned.items():
+                try:
+                    sentiment_result = self.sentiment_analyzer.analyze_stock_sentiment(posts, ticker)
+                    stock_mentions.append(
+                        StockMention(
+                            ticker=ticker,
+                            mention_count=mention_count,
+                            sentiment_score=sentiment_result.compound_score,
+                            sentiment_category=sentiment_result.category,
+                            last_updated=datetime.now(),
+                        )
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error analyzing sentiment for {ticker}: {e}")
+                    stock_mentions.append(
+                        StockMention(
+                            ticker=ticker,
+                            mention_count=mention_count,
+                            sentiment_score=0.0,
+                            sentiment_category="Neutral",
+                            last_updated=datetime.now(),
+                        )
+                    )
+
+            stock_mentions.sort(key=lambda x: x.mention_count, reverse=True)
+            self._save_cache(stock_mentions, posts)
+            return stock_mentions
+        except Exception as e:
+            self.logger.error(f"Parallel processing failed: {e}")
+            return self._get_fallback_data()
+
+    def force_refresh_for_subreddits(self, subreddits: List[str], posts_per_sub: int = 200, top_stocks_limit: int = 20) -> List[StockMention]:
+        """Clear cache and fetch fresh data across subreddits in parallel."""
+        self._clear_cache()
+        return self.process_reddit_data_for_subreddits(subreddits, posts_per_sub, top_stocks_limit, use_cache=False)
+    
     def get_processing_status(self) -> Dict[str, any]:
         """
         Get status information about the data processing components.

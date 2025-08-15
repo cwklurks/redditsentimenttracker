@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from data_controller import DataController
 from models import StockMention
 import yfinance as yf
+from pathlib import Path
 
 # Constants
 HISTORY_DIR = "data/history"
@@ -33,6 +34,38 @@ PLOTLY_TEMPLATE = "plotly_white"
 GRAY = "#666666"
 DARK = "#000000"
 LIGHT = "#BBBBBB"
+
+# Theme palette for consistent sentiment colors
+PALETTE = {
+    "primary": "#2563EB",   # indigo
+    "positive": "#16A34A",  # green
+    "neutral":  "#64748B",  # slate
+    "negative": "#DC2626",  # red
+    "accent":   "#9333EA"   # purple
+}
+
+def sentiment_bucket(v: float) -> str:
+    if v > 0.1:
+        return "Positive"
+    if v < -0.1:
+        return "Negative"
+    return "Neutral"
+
+def sentiment_color(v: float) -> str:
+    bucket = sentiment_bucket(v)
+    return {"Positive": PALETTE["positive"], "Neutral": PALETTE["neutral"], "Negative": PALETTE["negative"]}[bucket]
+
+def cache_mtime(path: str) -> datetime | None:
+    p = Path(path)
+    if p.exists():
+        return datetime.fromtimestamp(p.stat().st_mtime)
+    return None
+
+def human_ago(ts: datetime | None) -> str:
+    if not ts:
+        return "never"
+    mins = int((datetime.now() - ts).total_seconds() // 60)
+    return "just now" if mins == 0 else f"{mins} min ago"
 
 
 def ensure_dirs():
@@ -172,7 +205,11 @@ def export_buttons(current_df: pd.DataFrame):
         # Show a small hint instead of leaving the section blank
         st.caption("No data to export yet.")
         return
-    csv = current_df.to_csv(index=False).encode('utf-8')
+    notes = load_notes()
+    df_out = current_df.copy()
+    if "ticker" in df_out.columns:
+        df_out["note"] = df_out["ticker"].map(notes).fillna("")
+    csv = df_out.to_csv(index=False).encode('utf-8')
     st.download_button(
         "Download CSV",
         data=csv,
@@ -199,28 +236,37 @@ def chart_scatter_current(df_current: pd.DataFrame):
     # TODO: [Architecture] Create dedicated visualization component classes for better code organization
     if df_current.empty:
         return
+    df = df_current.copy()
+    df["sentiment_bucket"] = df["sentiment_score"].apply(sentiment_bucket)
     fig = px.scatter(
-        df_current,
-        x="mention_count", y="sentiment_score", text="ticker",
+        df,
+        x="mention_count",
+        y="sentiment_score",
+        text="ticker",
+        color="sentiment_bucket",
+        color_discrete_map={
+            "Positive": PALETTE["positive"],
+            "Neutral": PALETTE["neutral"],
+            "Negative": PALETTE["negative"],
+        },
         template=PLOTLY_TEMPLATE,
     )
-    fig.update_traces(marker=dict(color=DARK, size=10), textposition="top center")
-    fig.update_layout(xaxis_title="Mentions", yaxis_title="Sentiment Score", showlegend=False)
+    fig.update_traces(marker=dict(size=12, line=dict(width=0.5, color="#111827")), textposition="top center")
+    fig.update_layout(xaxis_title="Mentions", yaxis_title="Sentiment Score", showlegend=True, title="Mentions vs Sentiment")
     st.plotly_chart(fig, use_container_width=True)
 
 
 def chart_treemap_current(df_current: pd.DataFrame):
     if df_current.empty:
         return
-    # Grayscale by sentiment score
-    colors = df_current["sentiment_score"].apply(lambda v: DARK if v > 0 else (GRAY if abs(v) < 0.1 else LIGHT))
-    fig = go.Figure(go.Treemap(
-        labels=df_current["ticker"],
-        parents=[""] * len(df_current),
-        values=df_current["mention_count"],
-        marker=dict(colors=colors),
-        textinfo="label+value"
-    ))
+    fig = px.treemap(
+        df_current,
+        path=["ticker"],
+        values="mention_count",
+        color="sentiment_score",
+        color_continuous_scale=[PALETTE["negative"], PALETTE["neutral"], PALETTE["positive"]],
+        hover_data={"sentiment_score":":.2f", "mention_count":":d"},
+    )
     fig.update_layout(template=PLOTLY_TEMPLATE, margin=dict(t=10,l=0,r=0,b=0))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -242,9 +288,8 @@ def chart_stacked_sentiment_history(df_hist: pd.DataFrame):
         return
     daily = (df_hist.groupby(["run_date", "sentiment_category"], as_index=False)
                    .size().rename(columns={"size": "count"}))
-    cats = ["Positive", "Neutral", "Negative"]
     fig = go.Figure()
-    for cat, color in [("Positive", DARK), ("Neutral", GRAY), ("Negative", LIGHT)]:
+    for cat, color in [("Positive", PALETTE["positive"]), ("Neutral", PALETTE["neutral"]), ("Negative", PALETTE["negative"])]:
         sub = daily[daily["sentiment_category"] == cat]
         fig.add_trace(go.Bar(x=sub["run_date"], y=sub["count"], name=cat, marker_color=color))
     fig.update_layout(barmode="stack", template=PLOTLY_TEMPLATE, xaxis_title="Date", yaxis_title="Posts")
@@ -376,19 +421,34 @@ def main():
     now_ts = time.time()
     backoff_until = st.session_state.get("network_backoff_until", 0)
     network_skipped = False
-    latest_mentions = []
-    if now_ts < backoff_until and not force_refresh:
-        network_skipped = True
-        latest_mentions = controller.get_cached_data() or []
-    else:
+    latest_mentions: list[StockMention] = []
+    with st.status("Fetching data…", expanded=False) as s:
         try:
-            latest_mentions = controller.force_refresh(post_limit, top_limit) if force_refresh else controller.process_reddit_data(post_limit, top_limit)
-            # Success clears backoff
-            st.session_state["network_backoff_until"] = 0
+            if now_ts < backoff_until and not force_refresh:
+                network_skipped = True
+                latest_mentions = controller.get_cached_data() or []
+                st.session_state["used_cache"] = True
+            else:
+                if subreddits:
+                    latest_mentions = (
+                        controller.force_refresh_for_subreddits(subreddits, post_limit, top_limit)
+                        if force_refresh
+                        else controller.process_reddit_data_for_subreddits(subreddits, post_limit, top_limit, use_cache=True)
+                    )
+                else:
+                    latest_mentions = (
+                        controller.force_refresh(post_limit, top_limit)
+                        if force_refresh
+                        else controller.process_reddit_data(post_limit, top_limit)
+                    )
+                st.session_state["used_cache"] = False
+                st.session_state["network_backoff_until"] = 0
+            s.update(label="Fetch complete", state="complete")
         except Exception:
-            # On error, set a 10-minute backoff and use cache if any
+            st.error("Fresh fetch failed. Showing the most recent cached results.")
             st.session_state["network_backoff_until"] = now_ts + 600
             latest_mentions = controller.get_cached_data() or []
+            st.session_state["used_cache"] = True
 
     for sr in subreddits:
         mentions = [m for m in latest_mentions if m.mention_count >= min_mentions and m.sentiment_score >= min_sentiment]
@@ -452,6 +512,24 @@ def main():
         if status.get("posts_sentiment_summary"):
             st.caption(f"Post sentiment distribution (source): {status['posts_sentiment_summary']} across {status.get('post_count')} posts")
 
+    # Updated-at badge and quick stats
+    status = controller.get_processing_status()
+    st.session_state["post_count"] = status.get("post_count") or 0
+    df_run = pd.concat(all_current_frames, ignore_index=True) if all_current_frames else pd.DataFrame()
+    badge = "Cached" if st.session_state.get("used_cache") else "Fresh"
+    badge_color = PALETTE["accent"] if badge == "Cached" else PALETTE["primary"]
+    st.markdown(
+        f"<span style='background:{badge_color};color:white;padding:3px 8px;border-radius:8px;font-size:12px'>{badge}</span> "
+        f"<span style='color:#6B7280;margin-left:6px'>Updated {human_ago(cache_mtime(controller.cache_file))} • "
+        f"Posts {st.session_state.get('post_count',0)} • Tickers {df_run['ticker'].nunique() if not df_run.empty else 0}</span>",
+        unsafe_allow_html=True
+    )
+
+    # Empty state after filters
+    if not combined_mentions:
+        st.info("No tickers met your filters. Try lowering Min Mentions or adding another subreddit.")
+        st.stop()
+
     with st.expander("What does Sentiment Score mean?", expanded=False):
         st.markdown("Sentiment Score uses VADER’s compound metric (range −1.0 to +1.0).")
         st.markdown("\n**Standard categories (used in visuals):**\n- Positive: > +0.1\n- Neutral: between −0.1 and +0.1\n- Negative: < −0.1")
@@ -466,6 +544,37 @@ def main():
 
     # Alerts
     alerts_panel(combined_mentions, alert_min_mentions, alert_min_sent)
+
+    # Inline alert badges + table
+    alert_mentions = alert_min_mentions
+    alert_sent = alert_min_sent
+
+    def alert_badge(m: StockMention) -> str:
+        hits = []
+        if m.mention_count >= alert_mentions:
+            hits.append("Mentions")
+        if m.sentiment_score >= alert_sent:
+            hits.append("Sentiment")
+        return " • ".join(hits)
+
+    df_show = pd.DataFrame([
+        {"ticker": m.ticker, "mentions": m.mention_count, "avg_sentiment": m.sentiment_score, "alerts": alert_badge(m)}
+        for m in combined_mentions
+    ])
+
+    def alert_color_html(txt: str) -> str:
+        return f"<span style='color:{PALETTE['positive']};font-weight:600'>{txt}</span>" if txt else ""
+
+    if not df_show.empty:
+        df_show["alerts_display"] = df_show["alerts"].apply(alert_color_html)
+        st.markdown("### Top Tickers")
+        st.write(
+            df_show[["ticker", "mentions", "avg_sentiment", "alerts_display"]]
+                .sort_values(["mentions", "avg_sentiment"], ascending=[False, False])
+                .rename(columns={"alerts_display": "alerts"})
+                .to_html(escape=False, index=False),
+            unsafe_allow_html=True,
+        )
 
     # Export (render into the sidebar placeholder)
     current_df_export = pd.concat(all_current_frames, ignore_index=True) if all_current_frames else pd.DataFrame()
@@ -504,7 +613,7 @@ def main():
         chart_price_overlay(sel_ticker, hist)
 
     st.markdown("---")
-    st.caption("Built with Streamlit • Data from Reddit • Simple grayscale visuals")
+    st.caption("Built with Streamlit • Data from Reddit • Cohesive theme visuals")
 
 
 if __name__ == "__main__":

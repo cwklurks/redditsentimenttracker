@@ -19,12 +19,13 @@ from models import RedditPost
 
 
 class RedditScraper:
-    def __init__(self, user_agent: str = "web:reddit-sentiment-tracker:1.0 (https://redditsentiment.streamlit.app)"):
+    def __init__(self, user_agent: str = "web:reddit-sentiment-tracker:1.0 (https://redditsentiment.streamlit.app)", request_delay: Optional[float] = None):
         """
         Initialize Reddit scraper using JSON feeds (no authentication required).
         
         Args:
             user_agent: User agent string for requests
+            request_delay: Seconds between requests (overrides env if provided)
         """
         # Allow overriding UA via environment (Streamlit secrets can map to env)
         # TODO: [Security] Add user agent validation to ensure format compliance and prevent injection attacks
@@ -57,10 +58,16 @@ class RedditScraper:
                 self.cffi_session = None
         
         # Rate limiting - be respectful to Reddit (allow override)
-        try:
-            self.request_delay = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
-        except Exception:
-            self.request_delay = 1.5  # seconds between requests
+        if request_delay is not None:
+            try:
+                self.request_delay = float(request_delay)
+            except Exception:
+                self.request_delay = 1.5
+        else:
+            try:
+                self.request_delay = float(os.getenv("REQUEST_DELAY_SECONDS", "1.5"))
+            except Exception:
+                self.request_delay = 1.5  # seconds between requests
         self.last_request_time = 0
         
         # Diagnostics (surfaced in UI to help debug Streamlit Cloud issues)
@@ -75,17 +82,37 @@ class RedditScraper:
         # Optional proxy (e.g., Cloudflare Worker) to bypass Cloud IP blocks
         # Example: https://your-worker.example.workers.dev
         self.proxy_base = os.getenv("REDDIT_PROXY_BASE", "").rstrip("/")
+        # Prefer proxy when configured unless explicitly disabled
+        self.proxy_only = os.getenv("REDDIT_PROXY_ONLY", "true").lower() in {"1", "true", "yes"}
 
     def _apply_proxy(self, url: str) -> str:
-        """If a proxy base is configured, route the request through it."""
+        """If a proxy base is configured, route the request through it (default shape)."""
         if not self.proxy_base:
             return url
         try:
-            # Simple pass-through using query param; Worker should fetch decodeURIComponent(url)
             from urllib.parse import quote
             return f"{self.proxy_base}?url={quote(url, safe='')}&ua={quote(self.user_agent, safe='')}"
         except Exception:
             return url
+
+    def _proxy_url_variants(self, target_url: str) -> List[str]:
+        """Generate likely proxy URL variants to maximize compatibility with different Worker handlers."""
+        try:
+            from urllib.parse import quote
+            encoded = quote(target_url, safe="")
+            encoded_ua = quote(self.user_agent, safe="")
+        except Exception:
+            encoded = target_url
+            encoded_ua = self.user_agent
+        base = self.proxy_base
+        return [
+            f"{base}?url={encoded}&ua={encoded_ua}",
+            f"{base}/?url={encoded}&ua={encoded_ua}",
+            f"{base}?target={encoded}&ua={encoded_ua}",
+            f"{base}/?target={encoded}&ua={encoded_ua}",
+            f"{base}/fetch?url={encoded}&ua={encoded_ua}",
+            f"{base}/proxy?url={encoded}&ua={encoded_ua}",
+        ]
     
     def is_authenticated(self) -> bool:
         """Check if Reddit scraper is ready (always True for JSON feeds)."""
@@ -121,36 +148,52 @@ class RedditScraper:
                 time.sleep(backoff_seconds)
 
             try:
-                proxied = self._apply_proxy(url)
-                self.last_url = proxied
-                response = self.session.get(proxied, timeout=20)
-                self.last_http_status = response.status_code
+                # Prefer proxy variants when configured; optionally include direct as last resort
+                candidate_urls: List[str] = []
+                if self.proxy_base:
+                    candidate_urls.extend(self._proxy_url_variants(url))
+                    if not self.proxy_only:
+                        candidate_urls.append(url)
+                else:
+                    candidate_urls = [url]
 
-                # Backoff on common block codes
-                if response.status_code in (429, 403, 503):
-                    backoff_seconds = max(1.5, (backoff_seconds * 2) if backoff_seconds else 1.5)
-                    self._json_blocked_count += 1
-                    continue
-
-                response.raise_for_status()
-                self.last_request_time = time.time()
-                self.last_error_message = None
-                # Success resets block counter
-                self._json_blocked_count = 0
-                try:
-                    return response.json()
-                except ValueError:
-                    # Some fallbacks return application/text but body is JSON or include preamble.
-                    text = response.text.strip()
+                last_exc: Optional[Exception] = None
+                for cand in candidate_urls:
                     try:
-                        return json.loads(text)
-                    except Exception:
-                        # Attempt loose extraction of the first JSON object/array in the text
-                        start = min([i for i in [text.find("{"), text.find("[")] if i != -1] or [0])
-                        end = max(text.rfind("}"), text.rfind("]")) + 1
-                        if end > start:
-                            return json.loads(text[start:end])
-                        raise
+                        self.last_url = cand
+                        response = self.session.get(cand, timeout=30)
+                        self.last_http_status = response.status_code
+                        if response.status_code in (429, 403, 503, 520, 521, 522, 523, 524):
+                            # Cloudflare and rate-limit responses -> backoff and retry next candidate/attempt
+                            last_exc = requests.exceptions.RequestException(f"HTTP {response.status_code}")
+                            continue
+                        response.raise_for_status()
+
+                        self.last_request_time = time.time()
+                        self.last_error_message = None
+                        self._json_blocked_count = 0
+                        try:
+                            return response.json()
+                        except ValueError:
+                            text = response.text.strip()
+                            try:
+                                return json.loads(text)
+                            except Exception:
+                                start = min([i for i in [text.find("{"), text.find("[")] if i != -1] or [0])
+                                end = max(text.rfind("}"), text.rfind("]")) + 1
+                                if end > start:
+                                    return json.loads(text[start:end])
+                                # Try next candidate
+                                last_exc = ValueError("JSON parse error from proxy/direct response")
+                                continue
+                    except requests.exceptions.RequestException as e:
+                        last_exc = e
+                        continue
+
+                if last_exc is not None:
+                    # Increase backoff and retry outer loop
+                    raise last_exc
+                raise Exception("No candidate URL succeeded")
             except requests.exceptions.RequestException as e:
                 self.last_error_message = f"Request error: {e}"
                 # Transient network errors: try again with backoff

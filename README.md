@@ -2,8 +2,6 @@
 
 A minimal, on‑demand Streamlit dashboard that analyzes Reddit chatter for stock tickers and sentiment—no API keys required.
 
-Use the app: https://redditsentiment.streamlit.app/
-
 ## Features
 
 - Public Reddit JSON feeds (no OAuth): fetches r/wallstreetbets hot posts with pagination and a 1s polite delay
@@ -98,3 +96,4 @@ python3 -m pytest --cov=. --cov-report=term-missing
 - Python: `streamlit`, `requests`, `pandas`, `plotly`, `vaderSentiment`, `yfinance`, `pyarrow`, `python-dotenv`
 
 Respect Reddit’s servers: keep delays, avoid excessive requests.
+EOF
