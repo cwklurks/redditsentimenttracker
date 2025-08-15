@@ -1,7 +1,8 @@
 # Reddit Stock Sentiment Tracker (Streamlit)
 
-A minimal, on‑demand Streamlit dashboard that analyzes Reddit chatter for stock tickers and sentiment—no API keys required.
+A minimal, on‑demand Streamlit dashboard that analyzes Reddit chatter for stock tickers and sentiment, no API keys required.
 
+https://redditsentiment.streamlit.app/
 ## Features
 
 - Public Reddit JSON feeds (no OAuth): fetches r/wallstreetbets hot posts with pagination and a 1s polite delay
